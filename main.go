@@ -10,11 +10,11 @@ import (
 
 func main() {
 	proxyOption := auth.WithProxy("http://localhost:7890")
-	// userAgentOption := auth.WithUserAgent(os.Getenv("USER_AGENT"))
+	userAgentOption := auth.WithUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
 	// chatOpenAiCookies := auth.WithChatOpenAiCookies(map[string]string{})
 	// authOpenAICookies := auth.WithAuthOpenaiCookies(map[string]string{})
 
-	auth := auth.NewAuthenticator(os.Getenv("OPENAI_EMAIL"), os.Getenv("OPENAI_PASSWORD"), proxyOption)
+	auth := auth.NewAuthenticator(os.Getenv("OPENAI_EMAIL"), os.Getenv("OPENAI_PASSWORD"), proxyOption, userAgentOption)
 	err := auth.Begin()
 	if err != nil {
 		println("Error: " + err.Details)

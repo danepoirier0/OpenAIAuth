@@ -61,7 +61,7 @@ const (
 	GetArkoseTokenErrorMessage         = "Failed to get arkose token."
 	defaultTimeoutSeconds              = 600 // 10 minutes
 
-	CloudFlareForbiddenErrorMessage = "may have encounted Cloudflare's anti-bot protection, please send request with cookies"
+	CloudFlareForbiddenErrorMessage = "may have encountered Cloudflare's anti-bot protection, please send request with cookies"
 
 	csrfUrl                  = "https://chat.openai.com/api/auth/csrf"
 	promptLoginUrl           = "https://chat.openai.com/api/auth/signin/login-web?prompt=login"
@@ -70,13 +70,14 @@ const (
 )
 
 type UserLogin struct {
-	Username          string
-	Password          string
-	client            tls_client.HttpClient
-	Result            Result
-	userAgent         string
-	chatOpenAiCookies map[string]string // chat.openai.com 需要的Cookies
-	authOpenAiCookies map[string]string // auth.openai.com 需要的Cookies
+	Username           string
+	Password           string
+	client             tls_client.HttpClient
+	Result             Result
+	userAgent          string
+	chatOpenAiCookies  map[string]string // chat.openai.com 需要的Cookies
+	authOpenAiCookies  map[string]string // auth.openai.com 需要的Cookies
+	auth0OpenAiCookies map[string]string // auth0.openai.com 需要的Cookies
 }
 
 //goland:noinspection GoUnhandledErrorResult,SpellCheckingInspection
@@ -101,12 +102,13 @@ func getHttpClient() tls_client.HttpClient {
 
 func NewAuthenticator(emailAddress, password string, opts ...Option) *UserLogin {
 	userLogin := &UserLogin{
-		Username:          emailAddress,
-		Password:          password,
-		client:            NewHttpClient(""),
-		userAgent:         UserAgent,
-		chatOpenAiCookies: map[string]string{},
-		authOpenAiCookies: map[string]string{},
+		Username:           emailAddress,
+		Password:           password,
+		client:             NewHttpClient(""),
+		userAgent:          UserAgent,
+		chatOpenAiCookies:  map[string]string{},
+		authOpenAiCookies:  map[string]string{},
+		auth0OpenAiCookies: map[string]string{},
 	}
 
 	for _, opt := range opts {
@@ -125,7 +127,7 @@ func (userLogin *UserLogin) GetAuthorizedUrl(csrfToken string) (string, int, err
 	}
 	req, err := http.NewRequest(http.MethodPost, promptLoginUrl, strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", ContentType)
-	req.Header.Set("User-Agent", UserAgent)
+	req.Header.Set("User-Agent", userLogin.userAgent)
 	resp, err := userLogin.client.Do(req)
 	if err != nil {
 		return "", http.StatusInternalServerError, err
@@ -145,9 +147,9 @@ func (userLogin *UserLogin) GetAuthorizedUrl(csrfToken string) (string, int, err
 func (userLogin *UserLogin) GetState(authorizedUrl string) (int, error) {
 	req, err := http.NewRequest(http.MethodGet, authorizedUrl, nil)
 
-	req.Header.Set("User-Agent", UserAgent)
-	req.Header.Set("sec-ch-ua-arch", "x86")
-	req.Header.Set("sec-ch-ua-bitness", "64")
+	req.Header.Set("User-Agent", userLogin.userAgent)
+	// req.Header.Set("sec-ch-ua-arch", "x86")
+	// req.Header.Set("sec-ch-ua-bitness", "64")
 
 	resp, err := userLogin.client.Do(req)
 	if err != nil {
@@ -155,7 +157,7 @@ func (userLogin *UserLogin) GetState(authorizedUrl string) (int, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		log.Println("status is not ok, url is ", authorizedUrl)
+		log.Printf("status is %d, url is %s", resp.StatusCode, authorizedUrl)
 		return resp.StatusCode, errors.New(GetStateErrorMessage)
 	}
 	return http.StatusOK, nil
@@ -168,8 +170,12 @@ func (userLogin *UserLogin) CheckUsername(authorizedUrl string, username string)
 	query.Del("prompt")
 	query.Set("login_hint", username)
 	req, _ := http.NewRequest(http.MethodGet, Auth0Url+"/authorize?"+query.Encode(), nil)
-	req.Header.Set("User-Agent", UserAgent)
+
+	req.Header.Set("User-Agent", userLogin.userAgent)
 	req.Header.Set("Referer", "https://auth.openai.com/")
+	req.Header.Set("sec-ch-ua-arch", "x86")
+	req.Header.Set("sec-ch-ua-bitness", "64")
+
 	userLogin.client.SetFollowRedirect(false)
 	resp, err := userLogin.client.Do(req)
 	if err != nil {
@@ -180,7 +186,7 @@ func (userLogin *UserLogin) CheckUsername(authorizedUrl string, username string)
 	if resp.StatusCode == http.StatusFound {
 		redir := resp.Header.Get("Location")
 		req, _ := http.NewRequest(http.MethodGet, Auth0Url+redir, nil)
-		req.Header.Set("User-Agent", UserAgent)
+		req.Header.Set("User-Agent", userLogin.userAgent)
 		req.Header.Set("Referer", "https://auth.openai.com/")
 		resp, err := userLogin.client.Do(req)
 		if err != nil {
@@ -201,7 +207,13 @@ func (userLogin *UserLogin) CheckUsername(authorizedUrl string, username string)
 		state := u.Query().Get("state")
 		return state, dx, http.StatusOK, nil
 	} else {
-		return "", "", http.StatusInternalServerError, err
+		if resp.StatusCode == http.StatusForbidden {
+			log.Println("error in CheckUsername, cf forbidden url is", Auth0Url+"/authorize?"+query.Encode())
+			return "", "", resp.StatusCode, errors.New(CloudFlareForbiddenErrorMessage)
+		}
+
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return "", "", resp.StatusCode, errors.New(string(bodyBytes))
 	}
 }
 
@@ -226,8 +238,13 @@ func (userLogin *UserLogin) CheckPassword(state string, username string, passwor
 		"password": {password},
 	}
 	req, err := http.NewRequest(http.MethodPost, LoginPasswordUrl+state, strings.NewReader(formParams.Encode()))
+
 	req.Header.Set("Content-Type", ContentType)
-	req.Header.Set("User-Agent", UserAgent)
+	req.Header.Set("User-Agent", userLogin.userAgent)
+	req.Header.Set("sec-ch-ua-arch", "x86")
+	req.Header.Set("sec-ch-ua-bitness", "64")
+	req.Header.Set("Cookie", "")
+
 	userLogin.client.SetFollowRedirect(false)
 	resp, err := userLogin.client.Do(req)
 	if err != nil {
@@ -241,7 +258,7 @@ func (userLogin *UserLogin) CheckPassword(state string, username string, passwor
 
 	if resp.StatusCode == http.StatusFound {
 		req, _ := http.NewRequest(http.MethodGet, Auth0Url+resp.Header.Get("Location"), nil)
-		req.Header.Set("User-Agent", UserAgent)
+		req.Header.Set("User-Agent", userLogin.userAgent)
 		resp, err := userLogin.client.Do(req)
 		if err != nil {
 			return "", http.StatusInternalServerError, err
@@ -255,7 +272,9 @@ func (userLogin *UserLogin) CheckPassword(state string, username string, passwor
 			}
 
 			req, _ := http.NewRequest(http.MethodGet, location, nil)
-			req.Header.Set("User-Agent", UserAgent)
+
+			req.Header.Set("User-Agent", userLogin.userAgent)
+
 			resp, err := userLogin.client.Do(req)
 			if err != nil {
 				return "", http.StatusInternalServerError, err
@@ -280,6 +299,7 @@ func (userLogin *UserLogin) CheckPassword(state string, username string, passwor
 	}
 
 	if resp.StatusCode == http.StatusForbidden {
+		log.Println("forbiddenurl is ", LoginPasswordUrl+state)
 		return "", resp.StatusCode, errors.New(CloudFlareForbiddenErrorMessage)
 	}
 
@@ -289,7 +309,7 @@ func (userLogin *UserLogin) CheckPassword(state string, username string, passwor
 //goland:noinspection GoUnhandledErrorResult,GoErrorStringFormat,GoUnusedParameter
 func (userLogin *UserLogin) GetAccessTokenInternal(code string) (string, int, error) {
 	req, err := http.NewRequest(http.MethodGet, authSessionUrl, nil)
-	req.Header.Set("User-Agent", UserAgent)
+	req.Header.Set("User-Agent", userLogin.userAgent)
 	resp, err := userLogin.client.Do(req)
 	if err != nil {
 		return "", http.StatusInternalServerError, err
@@ -330,9 +350,7 @@ func (userLogin *UserLogin) GetToken() (int, string, string) {
 	// get csrf token
 	req, _ := http.NewRequest(http.MethodGet, csrfUrl, nil)
 
-	req.Header.Set("User-Agent", UserAgent)
-	req.Header.Set("sec-ch-ua-arch", "x86")
-	req.Header.Set("sec-ch-ua-bitness", "64")
+	req.Header.Set("User-Agent", userLogin.userAgent)
 
 	resp, err := userLogin.client.Do(req)
 	if err != nil {
@@ -375,9 +393,6 @@ func (userLogin *UserLogin) GetToken() (int, string, string) {
 	if err != nil {
 		return statusCode, err.Error(), ""
 	}
-
-	log.Println("statusCode", statusCode)
-	log.Println("before GetAccessTokenInternal")
 
 	// get access token
 	accessToken, statusCode, err := userLogin.GetAccessTokenInternal("")

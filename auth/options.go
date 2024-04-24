@@ -25,3 +25,9 @@ func WithAuthOpenaiCookies(authOpenAiCookies map[string]string) Option {
 		ul.authOpenAiCookies = authOpenAiCookies
 	}
 }
+
+func WithAuth0OpenaiCookies(auth0OpenAiCookies map[string]string) Option {
+	return func(ul *UserLogin) {
+		ul.auth0OpenAiCookies = auth0OpenAiCookies
+	}
+}
