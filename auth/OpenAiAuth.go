@@ -67,10 +67,13 @@ const (
 )
 
 type UserLogin struct {
-	Username string
-	Password string
-	client   tls_client.HttpClient
-	Result   Result
+	Username          string
+	Password          string
+	client            tls_client.HttpClient
+	Result            Result
+	userAgent         string
+	chatOpenAiCookies map[string]string // chat.openai.com 需要的Cookies
+	authOpenAiCookies map[string]string // auth.openai.com 需要的Cookies
 }
 
 //goland:noinspection GoUnhandledErrorResult,SpellCheckingInspection
@@ -93,12 +96,20 @@ func getHttpClient() tls_client.HttpClient {
 	return client
 }
 
-func NewAuthenticator(emailAddress, password, proxy string) *UserLogin {
+func NewAuthenticator(emailAddress, password string, opts ...Option) *UserLogin {
 	userLogin := &UserLogin{
-		Username: emailAddress,
-		Password: password,
-		client:   NewHttpClient(proxy),
+		Username:          emailAddress,
+		Password:          password,
+		client:            NewHttpClient(""),
+		userAgent:         UserAgent,
+		chatOpenAiCookies: map[string]string{},
+		authOpenAiCookies: map[string]string{},
 	}
+
+	for _, opt := range opts {
+		opt(userLogin)
+	}
+
 	return userLogin
 }
 

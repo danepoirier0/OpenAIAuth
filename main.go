@@ -9,7 +9,13 @@ import (
 )
 
 func main() {
-	auth := auth.NewAuthenticator(os.Getenv("OPENAI_EMAIL"), os.Getenv("OPENAI_PASSWORD"), os.Getenv("PROXY"))
+	proxyOption := auth.WithProxy(os.Getenv("PROXY"))
+	userAgentOption := auth.WithUserAgent(os.Getenv("USER_AGENT"))
+	chatOpenAiCookies := auth.WithChatOpenAiCookies(map[string]string{})
+	authOpenAICookies := auth.WithAuthOpenaiCookies(map[string]string{})
+
+	auth := auth.NewAuthenticator(os.Getenv("OPENAI_EMAIL"), os.Getenv("OPENAI_PASSWORD"),
+		proxyOption, userAgentOption, chatOpenAiCookies, authOpenAICookies)
 	err := auth.Begin()
 	if err != nil {
 		println("Error: " + err.Details)
