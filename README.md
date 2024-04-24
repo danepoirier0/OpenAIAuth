@@ -7,8 +7,9 @@
 
 ##### 方法列表
 - NewAuthenticator: 用户名密码登录,登录方法是普通的Web登录方式，无法获取长期有效的RefreshToken。使用函数选项模式（Functional options pattern）传递额外参数，包括代理、UserAgent、ChatOpenAiCookies、AuthOpenAiCookies.具体调用可以参考main.go中
-- Begin: 运行登录流程(登录完成后就可以通过其它方法获取信息)
-- GetPUID: 获取 puid
-- GetAuthResult: 获取AccessToken, puid, TeamUserId
+- Begin: 运行登录流程(登录完成后就可以通过其它方法获取信息)。 只获取 GetAuthResult.AccessToken字段
+- GetPUID: 获取 GetAuthResult.PUID字段。
+- GetTeamUserID: 获取 GetAuthResult.TeamUserID 字段.
+- GetAuthResult: 获取AccessToken, puid, TeamUserId。PUID只在开通了ChatGPT 4订阅权限下才会获取到。 TeamUserID也可能是在开通了Team后才会获取到
 - RenewWithCookies: 刷新AccessToken
 

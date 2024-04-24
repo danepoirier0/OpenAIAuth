@@ -306,9 +306,9 @@ func (userLogin *UserLogin) GetAccessTokenInternal(code string) (string, int, er
 }
 
 func (userLogin *UserLogin) Begin() *Error {
-	_, err, token := userLogin.GetToken()
+	statusCode, err, token := userLogin.GetToken()
 	if err != "" {
-		return NewError("begin", 0, err)
+		return NewError("begin", statusCode, err)
 	}
 	userLogin.Result.AccessToken = token
 	return nil
@@ -425,6 +425,7 @@ func (userLogin *UserLogin) GetTeamUserID() (string, *Error) {
 	if resp.StatusCode != 200 {
 		return "", NewError("get_teamuserid", resp.StatusCode, "Failed to make request")
 	}
+
 	var userId UserID
 	err = json.NewDecoder(resp.Body).Decode(&userId)
 	if err != nil {
