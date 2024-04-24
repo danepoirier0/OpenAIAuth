@@ -1,4 +1,4 @@
-##### 基于github.com/xqdoo00o/OpenAIAuth, 添加Cookies可以解决部分的403问题
+##### 基于github.com/xqdoo00o/OpenAIAuth, 添加Cookies可以解决部分的403问题,只更新了go代码部分
 - 有些特别黑的IP是无法靠请求中添加Cookies来解决的
 - 一般情况下 UserAgent、IP是和Cookies绑定的,其中一个变化会造成Cookies无效。
 - 有些黑的IP，下层的TCP链接断开后重新链接也会造成Cookies无效

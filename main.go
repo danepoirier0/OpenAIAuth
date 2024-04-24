@@ -23,13 +23,13 @@ func main() {
 		return
 	}
 
-	_, err = auth.GetPUID()
-	if err != nil {
-		println("Error: " + err.Details)
-		println("Location: " + err.Location)
-		println("Status code: " + fmt.Sprint(err.StatusCode))
-		return
-	}
+	// _, err = auth.GetPUID()
+	// if err != nil {
+	// 	println("Error: " + err.Details)
+	// 	println("Location: " + err.Location)
+	// 	println("Status code: " + fmt.Sprint(err.StatusCode))
+	// 	return
+	// }
 
 	// _, err = auth.GetTeamUserID()
 	// if err != nil {
