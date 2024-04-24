@@ -75,9 +75,9 @@ type UserLogin struct {
 	client             tls_client.HttpClient
 	Result             Result
 	userAgent          string
-	chatOpenAiCookies  map[string]string // chat.openai.com 需要的Cookies
-	authOpenAiCookies  map[string]string // auth.openai.com 需要的Cookies
-	auth0OpenAiCookies map[string]string // auth0.openai.com 需要的Cookies
+	chatOpenAiCookies  string // chat.openai.com 需要的Cookies
+	authOpenAiCookies  string // auth.openai.com 需要的Cookies
+	auth0OpenAiCookies string // auth0.openai.com 需要的Cookies
 }
 
 //goland:noinspection GoUnhandledErrorResult,SpellCheckingInspection
@@ -106,9 +106,9 @@ func NewAuthenticator(emailAddress, password string, opts ...Option) *UserLogin 
 		Password:           password,
 		client:             NewHttpClient(""),
 		userAgent:          UserAgent,
-		chatOpenAiCookies:  map[string]string{},
-		authOpenAiCookies:  map[string]string{},
-		auth0OpenAiCookies: map[string]string{},
+		chatOpenAiCookies:  "",
+		authOpenAiCookies:  "",
+		auth0OpenAiCookies: "",
 	}
 
 	for _, opt := range opts {
@@ -175,6 +175,7 @@ func (userLogin *UserLogin) CheckUsername(authorizedUrl string, username string)
 	req.Header.Set("Referer", "https://auth.openai.com/")
 	req.Header.Set("sec-ch-ua-arch", "x86")
 	req.Header.Set("sec-ch-ua-bitness", "64")
+	req.Header.Set("Cookie", userLogin.auth0OpenAiCookies)
 
 	userLogin.client.SetFollowRedirect(false)
 	resp, err := userLogin.client.Do(req)
@@ -186,8 +187,11 @@ func (userLogin *UserLogin) CheckUsername(authorizedUrl string, username string)
 	if resp.StatusCode == http.StatusFound {
 		redir := resp.Header.Get("Location")
 		req, _ := http.NewRequest(http.MethodGet, Auth0Url+redir, nil)
+
 		req.Header.Set("User-Agent", userLogin.userAgent)
 		req.Header.Set("Referer", "https://auth.openai.com/")
+		req.Header.Set("Cookie", "__cf_bm=.2pAuwGy_WnJPBjc5RLstGDlzLR8I2Wefafw0p126QI-1713947838-1.0.1.1-nYq1S7XfX4Qgymktu5_BqH9pyseygk2PCjEObI9AxojkK54utAbUquhJtNc3FJgKfVpqiqfcEQdSWSFNhQZnKg; cf_clearance=GLvr1AqHGOSoDJVRX08G4NXDtoir3Z.fECnopKeZi2M-1713947849-1.0.1.1-Cy8FGVM3tDvcxYhtQVsM5_5OvFVHBwYuZpZJDJhY72C24dVU14c90tVgMjaAULlxjfZ9oexn7vNNIe.nDTDyyw; did=s%3Av0%3Ae9706240-0215-11ef-a5a9-719d1698a910.ola6NoA0Da1LX2EQip98V6H9tgim%2BAznPN5%2Fp%2BN9vq4; auth0=s%3Av1.gadzZXNzaW9ugqZoYW5kbGXEQAJJfnOlcufPVME84NPdPm-TBkdhMwn0KadvC0UI5X93fuLk3pZGgCUiY_83Yz4lwb2-s7lsX4jDdK1IdxVFC2KmY29va2llg6dleHBpcmVz1_-S3agAZiy5VK5vcmlnaW5hbE1heEFnZc4PcxQAqHNhbWVTaXRlpG5vbmU.zII6ySGciG9kNF4jUhYgPL%2FnbFyav53ACbA5KTNdkqs; did_compat=s%3Av0%3Ae9706240-0215-11ef-a5a9-719d1698a910.ola6NoA0Da1LX2EQip98V6H9tgim%2BAznPN5%2Fp%2BN9vq4; auth0_compat=s%3Av1.gadzZXNzaW9ugqZoYW5kbGXEQAJJfnOlcufPVME84NPdPm-TBkdhMwn0KadvC0UI5X93fuLk3pZGgCUiY_83Yz4lwb2-s7lsX4jDdK1IdxVFC2KmY29va2llg6dleHBpcmVz1_-S3agAZiy5VK5vcmlnaW5hbE1heEFnZc4PcxQAqHNhbWVTaXRlpG5vbmU.zII6ySGciG9kNF4jUhYgPL%2FnbFyav53ACbA5KTNdkqs; _cfuvid=SjwVTe0bA8cSfc7VwPfwDPSjU3OY6CzpwSCnDW.qNn0-1713947860642-0.0.1.1-604800000; ajs_anonymous_id=510bea78-503f-46a6-80d0-2b235e6def11")
+
 		resp, err := userLogin.client.Do(req)
 		if err != nil {
 			return "", "", http.StatusInternalServerError, err
@@ -243,7 +247,7 @@ func (userLogin *UserLogin) CheckPassword(state string, username string, passwor
 	req.Header.Set("User-Agent", userLogin.userAgent)
 	req.Header.Set("sec-ch-ua-arch", "x86")
 	req.Header.Set("sec-ch-ua-bitness", "64")
-	req.Header.Set("Cookie", "")
+	req.Header.Set("Cookie", userLogin.auth0OpenAiCookies)
 
 	userLogin.client.SetFollowRedirect(false)
 	resp, err := userLogin.client.Do(req)
@@ -258,7 +262,10 @@ func (userLogin *UserLogin) CheckPassword(state string, username string, passwor
 
 	if resp.StatusCode == http.StatusFound {
 		req, _ := http.NewRequest(http.MethodGet, Auth0Url+resp.Header.Get("Location"), nil)
+
 		req.Header.Set("User-Agent", userLogin.userAgent)
+		req.Header.Set("Cookie", userLogin.auth0OpenAiCookies)
+
 		resp, err := userLogin.client.Do(req)
 		if err != nil {
 			return "", http.StatusInternalServerError, err
@@ -293,6 +300,11 @@ func (userLogin *UserLogin) CheckPassword(state string, username string, passwor
 			}
 
 			return "", resp.StatusCode, errors.New(GetAccessTokenErrorMessage)
+		}
+
+		if resp.StatusCode == http.StatusForbidden {
+			log.Println("forbiddenurl is ", Auth0Url+resp.Header.Get("Location"))
+			return "", resp.StatusCode, errors.New(CloudFlareForbiddenErrorMessage)
 		}
 
 		return "", resp.StatusCode, errors.New(EmailOrPasswordInvalidErrorMessage)
