@@ -13,9 +13,11 @@
 - RenewWithCookies: 刷新AccessToken
 
 ##### 如何获取登录har
+- 计算Arkose值，有两种方式，一种是自己或者登录har放到harPool中，另一种方式是使用计算Arkose的平台（在本项目中使用WithLoginArkosePlatform方法设置）。
 - 获取的har是登录的har文件，不是聊天的har。流程可以参考聊天har的获取方式[参考这里](https://github.com/gngpp/ninja/wiki/2-Arkose)
 - 走登录流程，要保存har文件的链接是```https://tcr9i.openai.com/fc/gt2/public_key/0A1D34FC-659D-4E23-B17B-694DCFCF6A6C```
 - har包含浏览器指纹，多次使用后可能会跟IP一样出现不能使用的问题，不能使用后需要更换。或者多放几个不同浏览器或者不同浏览器版本的har进去
+
 
 ##### 如何获取过CloudFlare盾的cookie
 - 可以联系我们解决
