@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/url"
 	"os"
 	"regexp"
@@ -59,6 +60,8 @@ const (
 	GetAccessTokenErrorMessage         = "Failed to get access token."
 	GetArkoseTokenErrorMessage         = "Failed to get arkose token."
 	defaultTimeoutSeconds              = 600 // 10 minutes
+
+	CloudFlareForbiddenErrorMessage = "may have encounted Cloudflare's anti-bot protection, please send request with cookies"
 
 	csrfUrl                  = "https://chat.openai.com/api/auth/csrf"
 	promptLoginUrl           = "https://chat.openai.com/api/auth/signin/login-web?prompt=login"
@@ -141,13 +144,18 @@ func (userLogin *UserLogin) GetAuthorizedUrl(csrfToken string) (string, int, err
 //goland:noinspection GoUnhandledErrorResult,GoErrorStringFormat
 func (userLogin *UserLogin) GetState(authorizedUrl string) (int, error) {
 	req, err := http.NewRequest(http.MethodGet, authorizedUrl, nil)
+
 	req.Header.Set("User-Agent", UserAgent)
+	req.Header.Set("sec-ch-ua-arch", "x86")
+	req.Header.Set("sec-ch-ua-bitness", "64")
+
 	resp, err := userLogin.client.Do(req)
 	if err != nil {
 		return http.StatusInternalServerError, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		log.Println("status is not ok, url is ", authorizedUrl)
 		return resp.StatusCode, errors.New(GetStateErrorMessage)
 	}
 	return http.StatusOK, nil
@@ -271,6 +279,10 @@ func (userLogin *UserLogin) CheckPassword(state string, username string, passwor
 		return "", resp.StatusCode, errors.New(EmailOrPasswordInvalidErrorMessage)
 	}
 
+	if resp.StatusCode == http.StatusForbidden {
+		return "", resp.StatusCode, errors.New(CloudFlareForbiddenErrorMessage)
+	}
+
 	return "", resp.StatusCode, nil
 }
 
@@ -317,7 +329,11 @@ func (userLogin *UserLogin) Begin() *Error {
 func (userLogin *UserLogin) GetToken() (int, string, string) {
 	// get csrf token
 	req, _ := http.NewRequest(http.MethodGet, csrfUrl, nil)
+
 	req.Header.Set("User-Agent", UserAgent)
+	req.Header.Set("sec-ch-ua-arch", "x86")
+	req.Header.Set("sec-ch-ua-bitness", "64")
+
 	resp, err := userLogin.client.Do(req)
 	if err != nil {
 		return http.StatusInternalServerError, err.Error(), ""
@@ -359,6 +375,9 @@ func (userLogin *UserLogin) GetToken() (int, string, string) {
 	if err != nil {
 		return statusCode, err.Error(), ""
 	}
+
+	log.Println("statusCode", statusCode)
+	log.Println("before GetAccessTokenInternal")
 
 	// get access token
 	accessToken, statusCode, err := userLogin.GetAccessTokenInternal("")

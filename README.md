@@ -13,3 +13,7 @@
 - GetAuthResult: 获取AccessToken, puid, TeamUserId。PUID只在开通了ChatGPT 4订阅权限下才会获取到。 TeamUserID也可能是在开通了Team后才会获取到
 - RenewWithCookies: 刷新AccessToken
 
+
+##### 其它改进
+- 在某些请求中加上sec-ch-ua-arch和sec-ch-ua-bitness能过避免让接口返回403
+
