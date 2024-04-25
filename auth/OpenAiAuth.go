@@ -190,7 +190,7 @@ func (userLogin *UserLogin) CheckUsername(authorizedUrl string, username string)
 
 		req.Header.Set("User-Agent", userLogin.userAgent)
 		req.Header.Set("Referer", "https://auth.openai.com/")
-		req.Header.Set("Cookie", "__cf_bm=.2pAuwGy_WnJPBjc5RLstGDlzLR8I2Wefafw0p126QI-1713947838-1.0.1.1-nYq1S7XfX4Qgymktu5_BqH9pyseygk2PCjEObI9AxojkK54utAbUquhJtNc3FJgKfVpqiqfcEQdSWSFNhQZnKg; cf_clearance=GLvr1AqHGOSoDJVRX08G4NXDtoir3Z.fECnopKeZi2M-1713947849-1.0.1.1-Cy8FGVM3tDvcxYhtQVsM5_5OvFVHBwYuZpZJDJhY72C24dVU14c90tVgMjaAULlxjfZ9oexn7vNNIe.nDTDyyw; did=s%3Av0%3Ae9706240-0215-11ef-a5a9-719d1698a910.ola6NoA0Da1LX2EQip98V6H9tgim%2BAznPN5%2Fp%2BN9vq4; auth0=s%3Av1.gadzZXNzaW9ugqZoYW5kbGXEQAJJfnOlcufPVME84NPdPm-TBkdhMwn0KadvC0UI5X93fuLk3pZGgCUiY_83Yz4lwb2-s7lsX4jDdK1IdxVFC2KmY29va2llg6dleHBpcmVz1_-S3agAZiy5VK5vcmlnaW5hbE1heEFnZc4PcxQAqHNhbWVTaXRlpG5vbmU.zII6ySGciG9kNF4jUhYgPL%2FnbFyav53ACbA5KTNdkqs; did_compat=s%3Av0%3Ae9706240-0215-11ef-a5a9-719d1698a910.ola6NoA0Da1LX2EQip98V6H9tgim%2BAznPN5%2Fp%2BN9vq4; auth0_compat=s%3Av1.gadzZXNzaW9ugqZoYW5kbGXEQAJJfnOlcufPVME84NPdPm-TBkdhMwn0KadvC0UI5X93fuLk3pZGgCUiY_83Yz4lwb2-s7lsX4jDdK1IdxVFC2KmY29va2llg6dleHBpcmVz1_-S3agAZiy5VK5vcmlnaW5hbE1heEFnZc4PcxQAqHNhbWVTaXRlpG5vbmU.zII6ySGciG9kNF4jUhYgPL%2FnbFyav53ACbA5KTNdkqs; _cfuvid=SjwVTe0bA8cSfc7VwPfwDPSjU3OY6CzpwSCnDW.qNn0-1713947860642-0.0.1.1-604800000; ajs_anonymous_id=510bea78-503f-46a6-80d0-2b235e6def11")
+		req.Header.Set("Cookie", userLogin.auth0OpenAiCookies)
 
 		resp, err := userLogin.client.Do(req)
 		if err != nil {
