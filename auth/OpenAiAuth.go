@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/url"
 	"os"
 	"regexp"
@@ -60,8 +59,6 @@ const (
 	GetAccessTokenErrorMessage         = "Failed to get access token."
 	GetArkoseTokenErrorMessage         = "Failed to get arkose token."
 	defaultTimeoutSeconds              = 600 // 10 minutes
-
-	CloudFlareForbiddenErrorMessage = "may have encountered Cloudflare's anti-bot protection, please send request with cookies"
 
 	csrfUrl                  = "https://chat.openai.com/api/auth/csrf"
 	promptLoginUrl           = "https://chat.openai.com/api/auth/signin/login-web?prompt=login"
@@ -157,8 +154,13 @@ func (userLogin *UserLogin) GetState(authorizedUrl string) (int, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		log.Printf("status is %d, url is %s", resp.StatusCode, authorizedUrl)
-		return resp.StatusCode, errors.New(GetStateErrorMessage)
+		if resp.StatusCode == http.StatusForbidden {
+			return resp.StatusCode, errors.New(NewCloudFlare403ErrorMessage(authorizedUrl))
+		} else {
+			errMsg := fmt.Sprintf("url %s return status code %d", authorizedUrl, resp.StatusCode)
+			return resp.StatusCode, errors.New(errMsg)
+		}
+
 	}
 	return http.StatusOK, nil
 }
@@ -212,8 +214,7 @@ func (userLogin *UserLogin) CheckUsername(authorizedUrl string, username string)
 		return state, dx, http.StatusOK, nil
 	} else {
 		if resp.StatusCode == http.StatusForbidden {
-			log.Println("error in CheckUsername, cf forbidden url is", Auth0Url+"/authorize?"+query.Encode())
-			return "", "", resp.StatusCode, errors.New(CloudFlareForbiddenErrorMessage)
+			return "", "", resp.StatusCode, errors.New(NewCloudFlare403ErrorMessage(Auth0Url + "/authorize?" + query.Encode()))
 		}
 
 		bodyBytes, _ := io.ReadAll(resp.Body)
@@ -303,16 +304,14 @@ func (userLogin *UserLogin) CheckPassword(state string, username string, passwor
 		}
 
 		if resp.StatusCode == http.StatusForbidden {
-			log.Println("forbiddenurl is ", Auth0Url+resp.Header.Get("Location"))
-			return "", resp.StatusCode, errors.New(CloudFlareForbiddenErrorMessage)
+			return "", resp.StatusCode, errors.New(NewCloudFlare403ErrorMessage(Auth0Url + resp.Header.Get("Location")))
 		}
 
 		return "", resp.StatusCode, errors.New(EmailOrPasswordInvalidErrorMessage)
 	}
 
 	if resp.StatusCode == http.StatusForbidden {
-		log.Println("forbiddenurl is ", LoginPasswordUrl+state)
-		return "", resp.StatusCode, errors.New(CloudFlareForbiddenErrorMessage)
+		return "", resp.StatusCode, errors.New(NewCloudFlare403ErrorMessage(LoginPasswordUrl + state))
 	}
 
 	return "", resp.StatusCode, nil
@@ -544,4 +543,10 @@ func (userLogin *UserLogin) RenewWithCookies() *Error {
 
 func (userLogin *UserLogin) GetAuthResult() Result {
 	return userLogin.Result
+}
+
+// 构造返回url的CloudFlare 403错误
+func NewCloudFlare403ErrorMessage(url string) string {
+
+	return fmt.Sprintf("url %s may have encountered Cloudflare's anti-bot protection, please send the request with cookies", url)
 }
