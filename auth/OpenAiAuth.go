@@ -61,10 +61,10 @@ const (
 	GetArkoseTokenErrorMessage         = "Failed to get arkose token."
 	defaultTimeoutSeconds              = 600 // 10 minutes
 
-	csrfUrl                  = "https://chat.openai.com/api/auth/csrf"
-	promptLoginUrl           = "https://chat.openai.com/api/auth/signin/login-web?prompt=login"
+	csrfUrl                  = "https://chatgpt.com/api/auth/csrf"
+	promptLoginUrl           = "https://chatgpt.com/api/auth/signin/login-web?prompt=login"
 	getCsrfTokenErrorMessage = "Failed to get CSRF token."
-	authSessionUrl           = "https://chat.openai.com/api/auth/session"
+	authSessionUrl           = "https://chatgpt.com/api/auth/session"
 )
 
 type UserLogin struct {
@@ -433,8 +433,8 @@ func (userLogin *UserLogin) GetPUID() (string, *Error) {
 	if userLogin.Result.AccessToken == "" {
 		return "", NewError("get_puid", 0, "Missing access token")
 	}
-	// Make request to https://chat.openai.com/backend-api/models
-	req, _ := http.NewRequest("GET", "https://chat.openai.com/backend-api/models?history_and_training_disabled=false", nil)
+	// Make request to https://chatgpt.com/backend-api/models
+	req, _ := http.NewRequest("GET", "https://chatgpt.com/backend-api/models?history_and_training_disabled=false", nil)
 	// Add headers
 	req.Header.Add("Authorization", "Bearer "+userLogin.Result.AccessToken)
 	req.Header.Add("User-Agent", UserAgent)
@@ -467,7 +467,7 @@ func (userLogin *UserLogin) GetTeamUserID() (string, *Error) {
 	if userLogin.Result.AccessToken == "" {
 		return "", NewError("get_teamuserid", 0, "Missing access token")
 	}
-	req, _ := http.NewRequest("GET", "https://chat.openai.com/backend-api/accounts/check/v4-2023-04-27", nil)
+	req, _ := http.NewRequest("GET", "https://chatgpt.com/backend-api/accounts/check/v4-2023-04-27", nil)
 	// Add headers
 	req.Header.Add("Authorization", "Bearer "+userLogin.Result.AccessToken)
 	req.Header.Add("User-Agent", UserAgent)
@@ -513,7 +513,7 @@ func (userLogin *UserLogin) ResetCookies() {
 }
 
 func (userLogin *UserLogin) SaveCookies() *Error {
-	u, _ := url.Parse("https://chat.openai.com")
+	u, _ := url.Parse("https://chatgpt.com")
 	cookies := userLogin.client.GetCookieJar().Cookies(u)
 	file, err := os.OpenFile("cookies.json", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
