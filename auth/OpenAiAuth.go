@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/url"
 	"os"
 	"regexp"
@@ -38,9 +37,10 @@ type AccountCookies map[string][]*http.Cookie
 var allCookies AccountCookies
 
 type Result struct {
-	AccessToken string `json:"access_token"`
-	PUID        string `json:"puid"`
-	TeamUserID  string `json:"team_uid,omitempty"`
+	AuthCookies []*http.Cookie `json:"auth_cookies"`
+	AccessToken string         `json:"access_token"`
+	PUID        string         `json:"puid"`
+	TeamUserID  string         `json:"team_uid,omitempty"`
 }
 
 const (
@@ -61,12 +61,10 @@ const (
 	GetArkoseTokenErrorMessage         = "Failed to get arkose token."
 	defaultTimeoutSeconds              = 600 // 10 minutes
 
-	CloudFlareForbiddenErrorMessage = "may have encountered Cloudflare's anti-bot protection, please send request with cookies"
-
-	csrfUrl                  = "https://chat.openai.com/api/auth/csrf"
-	promptLoginUrl           = "https://chat.openai.com/api/auth/signin/login-web?prompt=login"
+	csrfUrl                  = "https://chatgpt.com/api/auth/csrf"
+	promptLoginUrl           = "https://chatgpt.com/api/auth/signin/login-web?prompt=login"
 	getCsrfTokenErrorMessage = "Failed to get CSRF token."
-	authSessionUrl           = "https://chat.openai.com/api/auth/session"
+	authSessionUrl           = "https://chatgpt.com/api/auth/session"
 )
 
 type UserLogin struct {
@@ -157,8 +155,13 @@ func (userLogin *UserLogin) GetState(authorizedUrl string) (int, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		log.Printf("status is %d, url is %s", resp.StatusCode, authorizedUrl)
-		return resp.StatusCode, errors.New(GetStateErrorMessage)
+		if resp.StatusCode == http.StatusForbidden {
+			return resp.StatusCode, errors.New(NewCloudFlare403ErrorMessage(authorizedUrl))
+		} else {
+			errMsg := fmt.Sprintf("url %s return status code %d", authorizedUrl, resp.StatusCode)
+			return resp.StatusCode, errors.New(errMsg)
+		}
+
 	}
 	return http.StatusOK, nil
 }
@@ -190,7 +193,7 @@ func (userLogin *UserLogin) CheckUsername(authorizedUrl string, username string)
 
 		req.Header.Set("User-Agent", userLogin.userAgent)
 		req.Header.Set("Referer", "https://auth.openai.com/")
-		req.Header.Set("Cookie", "__cf_bm=.2pAuwGy_WnJPBjc5RLstGDlzLR8I2Wefafw0p126QI-1713947838-1.0.1.1-nYq1S7XfX4Qgymktu5_BqH9pyseygk2PCjEObI9AxojkK54utAbUquhJtNc3FJgKfVpqiqfcEQdSWSFNhQZnKg; cf_clearance=GLvr1AqHGOSoDJVRX08G4NXDtoir3Z.fECnopKeZi2M-1713947849-1.0.1.1-Cy8FGVM3tDvcxYhtQVsM5_5OvFVHBwYuZpZJDJhY72C24dVU14c90tVgMjaAULlxjfZ9oexn7vNNIe.nDTDyyw; did=s%3Av0%3Ae9706240-0215-11ef-a5a9-719d1698a910.ola6NoA0Da1LX2EQip98V6H9tgim%2BAznPN5%2Fp%2BN9vq4; auth0=s%3Av1.gadzZXNzaW9ugqZoYW5kbGXEQAJJfnOlcufPVME84NPdPm-TBkdhMwn0KadvC0UI5X93fuLk3pZGgCUiY_83Yz4lwb2-s7lsX4jDdK1IdxVFC2KmY29va2llg6dleHBpcmVz1_-S3agAZiy5VK5vcmlnaW5hbE1heEFnZc4PcxQAqHNhbWVTaXRlpG5vbmU.zII6ySGciG9kNF4jUhYgPL%2FnbFyav53ACbA5KTNdkqs; did_compat=s%3Av0%3Ae9706240-0215-11ef-a5a9-719d1698a910.ola6NoA0Da1LX2EQip98V6H9tgim%2BAznPN5%2Fp%2BN9vq4; auth0_compat=s%3Av1.gadzZXNzaW9ugqZoYW5kbGXEQAJJfnOlcufPVME84NPdPm-TBkdhMwn0KadvC0UI5X93fuLk3pZGgCUiY_83Yz4lwb2-s7lsX4jDdK1IdxVFC2KmY29va2llg6dleHBpcmVz1_-S3agAZiy5VK5vcmlnaW5hbE1heEFnZc4PcxQAqHNhbWVTaXRlpG5vbmU.zII6ySGciG9kNF4jUhYgPL%2FnbFyav53ACbA5KTNdkqs; _cfuvid=SjwVTe0bA8cSfc7VwPfwDPSjU3OY6CzpwSCnDW.qNn0-1713947860642-0.0.1.1-604800000; ajs_anonymous_id=510bea78-503f-46a6-80d0-2b235e6def11")
+		req.Header.Set("Cookie", userLogin.auth0OpenAiCookies)
 
 		resp, err := userLogin.client.Do(req)
 		if err != nil {
@@ -212,8 +215,7 @@ func (userLogin *UserLogin) CheckUsername(authorizedUrl string, username string)
 		return state, dx, http.StatusOK, nil
 	} else {
 		if resp.StatusCode == http.StatusForbidden {
-			log.Println("error in CheckUsername, cf forbidden url is", Auth0Url+"/authorize?"+query.Encode())
-			return "", "", resp.StatusCode, errors.New(CloudFlareForbiddenErrorMessage)
+			return "", "", resp.StatusCode, errors.New(NewCloudFlare403ErrorMessage(Auth0Url + "/authorize?" + query.Encode()))
 		}
 
 		bodyBytes, _ := io.ReadAll(resp.Body)
@@ -303,62 +305,64 @@ func (userLogin *UserLogin) CheckPassword(state string, username string, passwor
 		}
 
 		if resp.StatusCode == http.StatusForbidden {
-			log.Println("forbiddenurl is ", Auth0Url+resp.Header.Get("Location"))
-			return "", resp.StatusCode, errors.New(CloudFlareForbiddenErrorMessage)
+			return "", resp.StatusCode, errors.New(NewCloudFlare403ErrorMessage(Auth0Url + resp.Header.Get("Location")))
 		}
 
 		return "", resp.StatusCode, errors.New(EmailOrPasswordInvalidErrorMessage)
 	}
 
 	if resp.StatusCode == http.StatusForbidden {
-		log.Println("forbiddenurl is ", LoginPasswordUrl+state)
-		return "", resp.StatusCode, errors.New(CloudFlareForbiddenErrorMessage)
+		return "", resp.StatusCode, errors.New(NewCloudFlare403ErrorMessage(LoginPasswordUrl + state))
 	}
 
 	return "", resp.StatusCode, nil
 }
 
-//goland:noinspection GoUnhandledErrorResult,GoErrorStringFormat,GoUnusedParameter
-func (userLogin *UserLogin) GetAccessTokenInternal(code string) (string, int, error) {
-	req, err := http.NewRequest(http.MethodGet, authSessionUrl, nil)
-	req.Header.Set("User-Agent", userLogin.userAgent)
-	resp, err := userLogin.client.Do(req)
-	if err != nil {
-		return "", http.StatusInternalServerError, err
-	}
+// //goland:noinspection GoUnhandledErrorResult,GoErrorStringFormat,GoUnusedParameter
+// func (userLogin *UserLogin) GetAccessTokenInternal(code string) (string, int, error) {
+// 	req, err := http.NewRequest(http.MethodGet, authSessionUrl, nil)
+// 	req.Header.Set("User-Agent", userLogin.userAgent)
+// 	resp, err := userLogin.client.Do(req)
+// 	if err != nil {
+// 		return "", http.StatusInternalServerError, err
+// 	}
 
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		if resp.StatusCode == http.StatusTooManyRequests {
-			responseMap := make(map[string]string)
-			json.NewDecoder(resp.Body).Decode(&responseMap)
-			return "", resp.StatusCode, errors.New(responseMap["detail"])
-		}
+// 	defer resp.Body.Close()
+// 	if resp.StatusCode != http.StatusOK {
+// 		if resp.StatusCode == http.StatusTooManyRequests {
+// 			responseMap := make(map[string]string)
+// 			json.NewDecoder(resp.Body).Decode(&responseMap)
+// 			return "", resp.StatusCode, errors.New(responseMap["detail"])
+// 		}
 
-		return "", resp.StatusCode, errors.New(GetAccessTokenErrorMessage)
-	}
-	var result map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", 0, err
-	}
-	// Check if access token in data
-	if _, ok := result["accessToken"]; !ok {
-		result_string := fmt.Sprintf("%v", result)
-		return result_string, 0, errors.New("missing access token")
-	}
-	return result["accessToken"].(string), http.StatusOK, nil
-}
+// 		bdBytes, _ := io.ReadAll(resp.Body)
+// 		log.Println("resp.StatusCode", resp.StatusCode)
+// 		log.Println("bdBytes", string(bdBytes))
+
+// 		return "", resp.StatusCode, errors.New(GetAccessTokenErrorMessage)
+// 	}
+// 	var result map[string]interface{}
+// 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+// 		return "", 0, err
+// 	}
+// 	// Check if access token in data
+// 	if _, ok := result["accessToken"]; !ok {
+// 		result_string := fmt.Sprintf("%v", result)
+// 		return result_string, 0, errors.New("missing access token")
+// 	}
+// 	return result["accessToken"].(string), http.StatusOK, nil
+// }
 
 func (userLogin *UserLogin) Begin() *Error {
-	statusCode, err, token := userLogin.GetToken()
+	statusCode, err, authCookies := userLogin.GetAuthCookies()
 	if err != "" {
 		return NewError("begin", statusCode, err)
 	}
-	userLogin.Result.AccessToken = token
+	userLogin.Result.AuthCookies = authCookies
 	return nil
 }
 
-func (userLogin *UserLogin) GetToken() (int, string, string) {
+func (userLogin *UserLogin) GetAuthCookies() (int, string, []*http.Cookie) {
 	// get csrf token
 	req, _ := http.NewRequest(http.MethodGet, csrfUrl, nil)
 
@@ -366,12 +370,12 @@ func (userLogin *UserLogin) GetToken() (int, string, string) {
 
 	resp, err := userLogin.client.Do(req)
 	if err != nil {
-		return http.StatusInternalServerError, err.Error(), ""
+		return http.StatusInternalServerError, err.Error(), nil
 	}
 
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return resp.StatusCode, getCsrfTokenErrorMessage, ""
+		return resp.StatusCode, getCsrfTokenErrorMessage, nil
 	}
 
 	// get authorized url
@@ -379,40 +383,45 @@ func (userLogin *UserLogin) GetToken() (int, string, string) {
 	json.NewDecoder(resp.Body).Decode(&responseMap)
 	authorizedUrl, statusCode, err := userLogin.GetAuthorizedUrl(responseMap["csrfToken"])
 	if err != nil {
-		return statusCode, err.Error(), ""
+		return statusCode, err.Error(), nil
 	}
 
 	// get state
 	statusCode, err = userLogin.GetState(authorizedUrl)
 	if err != nil {
-		return statusCode, err.Error(), ""
+		return statusCode, err.Error(), nil
 	}
 
 	// check username
 	state, dx, statusCode, err := userLogin.CheckUsername(authorizedUrl, userLogin.Username)
 	if err != nil {
-		return statusCode, err.Error(), ""
+		return statusCode, err.Error(), nil
 	}
 
 	// set arkose captcha
 	statusCode, err = userLogin.setArkose(dx)
 	if err != nil {
-		return statusCode, err.Error(), ""
+		return statusCode, err.Error(), nil
 	}
 
 	// check password
 	_, statusCode, err = userLogin.CheckPassword(state, userLogin.Username, userLogin.Password)
 	if err != nil {
-		return statusCode, err.Error(), ""
+		return statusCode, err.Error(), nil
 	}
 
-	// get access token
-	accessToken, statusCode, err := userLogin.GetAccessTokenInternal("")
+	// // get access token
+	// accessToken, statusCode, err := userLogin.GetAccessTokenInternal("")
+	// if err != nil {
+	// 	return statusCode, err.Error(), ""
+	// }
+
+	chatgptUrl, err := url.Parse("https://chatgpt.com")
 	if err != nil {
-		return statusCode, err.Error(), ""
+		return -1, err.Error(), nil
 	}
 
-	return http.StatusOK, "", accessToken
+	return http.StatusOK, "", userLogin.client.GetCookies(chatgptUrl)
 }
 
 func (userLogin *UserLogin) GetAccessToken() string {
@@ -424,8 +433,8 @@ func (userLogin *UserLogin) GetPUID() (string, *Error) {
 	if userLogin.Result.AccessToken == "" {
 		return "", NewError("get_puid", 0, "Missing access token")
 	}
-	// Make request to https://chat.openai.com/backend-api/models
-	req, _ := http.NewRequest("GET", "https://chat.openai.com/backend-api/models?history_and_training_disabled=false", nil)
+	// Make request to https://chatgpt.com/backend-api/models
+	req, _ := http.NewRequest("GET", "https://chatgpt.com/backend-api/models?history_and_training_disabled=false", nil)
 	// Add headers
 	req.Header.Add("Authorization", "Bearer "+userLogin.Result.AccessToken)
 	req.Header.Add("User-Agent", UserAgent)
@@ -458,7 +467,7 @@ func (userLogin *UserLogin) GetTeamUserID() (string, *Error) {
 	if userLogin.Result.AccessToken == "" {
 		return "", NewError("get_teamuserid", 0, "Missing access token")
 	}
-	req, _ := http.NewRequest("GET", "https://chat.openai.com/backend-api/accounts/check/v4-2023-04-27", nil)
+	req, _ := http.NewRequest("GET", "https://chatgpt.com/backend-api/accounts/check/v4-2023-04-27", nil)
 	// Add headers
 	req.Header.Add("Authorization", "Bearer "+userLogin.Result.AccessToken)
 	req.Header.Add("User-Agent", UserAgent)
@@ -504,7 +513,7 @@ func (userLogin *UserLogin) ResetCookies() {
 }
 
 func (userLogin *UserLogin) SaveCookies() *Error {
-	u, _ := url.Parse("https://chat.openai.com")
+	u, _ := url.Parse("https://chatgpt.com")
 	cookies := userLogin.client.GetCookieJar().Cookies(u)
 	file, err := os.OpenFile("cookies.json", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
@@ -527,21 +536,27 @@ func (userLogin *UserLogin) SaveCookies() *Error {
 	return nil
 }
 
-func (userLogin *UserLogin) RenewWithCookies() *Error {
-	cookies := allCookies[userLogin.Username]
-	if len(cookies) == 0 {
-		return NewError("readCookie", 0, "no cookies")
-	}
-	u, _ := url.Parse("https://chat.openai.com")
-	userLogin.client.GetCookieJar().SetCookies(u, cookies)
-	accessToken, statusCode, err := userLogin.GetAccessTokenInternal("")
-	if err != nil {
-		return NewError("renewToken", statusCode, err.Error())
-	}
-	userLogin.Result.AccessToken = accessToken
-	return nil
-}
+// func (userLogin *UserLogin) RenewWithCookies() *Error {
+// 	cookies := allCookies[userLogin.Username]
+// 	if len(cookies) == 0 {
+// 		return NewError("readCookie", 0, "no cookies")
+// 	}
+// 	u, _ := url.Parse("https://chat.openai.com")
+// 	userLogin.client.GetCookieJar().SetCookies(u, cookies)
+// 	accessToken, statusCode, err := userLogin.GetAccessTokenInternal("")
+// 	if err != nil {
+// 		return NewError("renewToken", statusCode, err.Error())
+// 	}
+// 	userLogin.Result.AccessToken = accessToken
+// 	return nil
+// }
 
 func (userLogin *UserLogin) GetAuthResult() Result {
 	return userLogin.Result
+}
+
+// 构造返回url的CloudFlare 403错误
+func NewCloudFlare403ErrorMessage(url string) string {
+
+	return fmt.Sprintf("url %s may have encountered Cloudflare's anti-bot protection, please send the request with cookies", url)
 }
