@@ -37,9 +37,10 @@ type AccountCookies map[string][]*http.Cookie
 var allCookies AccountCookies
 
 type Result struct {
-	AccessToken string `json:"access_token"`
-	PUID        string `json:"puid"`
-	TeamUserID  string `json:"team_uid,omitempty"`
+	AuthCookies []*http.Cookie `json:"auth_cookies"`
+	AccessToken string         `json:"access_token"`
+	PUID        string         `json:"puid"`
+	TeamUserID  string         `json:"team_uid,omitempty"`
 }
 
 const (
@@ -317,47 +318,51 @@ func (userLogin *UserLogin) CheckPassword(state string, username string, passwor
 	return "", resp.StatusCode, nil
 }
 
-//goland:noinspection GoUnhandledErrorResult,GoErrorStringFormat,GoUnusedParameter
-func (userLogin *UserLogin) GetAccessTokenInternal(code string) (string, int, error) {
-	req, err := http.NewRequest(http.MethodGet, authSessionUrl, nil)
-	req.Header.Set("User-Agent", userLogin.userAgent)
-	resp, err := userLogin.client.Do(req)
-	if err != nil {
-		return "", http.StatusInternalServerError, err
-	}
+// //goland:noinspection GoUnhandledErrorResult,GoErrorStringFormat,GoUnusedParameter
+// func (userLogin *UserLogin) GetAccessTokenInternal(code string) (string, int, error) {
+// 	req, err := http.NewRequest(http.MethodGet, authSessionUrl, nil)
+// 	req.Header.Set("User-Agent", userLogin.userAgent)
+// 	resp, err := userLogin.client.Do(req)
+// 	if err != nil {
+// 		return "", http.StatusInternalServerError, err
+// 	}
 
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		if resp.StatusCode == http.StatusTooManyRequests {
-			responseMap := make(map[string]string)
-			json.NewDecoder(resp.Body).Decode(&responseMap)
-			return "", resp.StatusCode, errors.New(responseMap["detail"])
-		}
+// 	defer resp.Body.Close()
+// 	if resp.StatusCode != http.StatusOK {
+// 		if resp.StatusCode == http.StatusTooManyRequests {
+// 			responseMap := make(map[string]string)
+// 			json.NewDecoder(resp.Body).Decode(&responseMap)
+// 			return "", resp.StatusCode, errors.New(responseMap["detail"])
+// 		}
 
-		return "", resp.StatusCode, errors.New(GetAccessTokenErrorMessage)
-	}
-	var result map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", 0, err
-	}
-	// Check if access token in data
-	if _, ok := result["accessToken"]; !ok {
-		result_string := fmt.Sprintf("%v", result)
-		return result_string, 0, errors.New("missing access token")
-	}
-	return result["accessToken"].(string), http.StatusOK, nil
-}
+// 		bdBytes, _ := io.ReadAll(resp.Body)
+// 		log.Println("resp.StatusCode", resp.StatusCode)
+// 		log.Println("bdBytes", string(bdBytes))
+
+// 		return "", resp.StatusCode, errors.New(GetAccessTokenErrorMessage)
+// 	}
+// 	var result map[string]interface{}
+// 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+// 		return "", 0, err
+// 	}
+// 	// Check if access token in data
+// 	if _, ok := result["accessToken"]; !ok {
+// 		result_string := fmt.Sprintf("%v", result)
+// 		return result_string, 0, errors.New("missing access token")
+// 	}
+// 	return result["accessToken"].(string), http.StatusOK, nil
+// }
 
 func (userLogin *UserLogin) Begin() *Error {
-	statusCode, err, token := userLogin.GetToken()
+	statusCode, err, authCookies := userLogin.GetAuthCookies()
 	if err != "" {
 		return NewError("begin", statusCode, err)
 	}
-	userLogin.Result.AccessToken = token
+	userLogin.Result.AuthCookies = authCookies
 	return nil
 }
 
-func (userLogin *UserLogin) GetToken() (int, string, string) {
+func (userLogin *UserLogin) GetAuthCookies() (int, string, []*http.Cookie) {
 	// get csrf token
 	req, _ := http.NewRequest(http.MethodGet, csrfUrl, nil)
 
@@ -365,12 +370,12 @@ func (userLogin *UserLogin) GetToken() (int, string, string) {
 
 	resp, err := userLogin.client.Do(req)
 	if err != nil {
-		return http.StatusInternalServerError, err.Error(), ""
+		return http.StatusInternalServerError, err.Error(), nil
 	}
 
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return resp.StatusCode, getCsrfTokenErrorMessage, ""
+		return resp.StatusCode, getCsrfTokenErrorMessage, nil
 	}
 
 	// get authorized url
@@ -378,40 +383,45 @@ func (userLogin *UserLogin) GetToken() (int, string, string) {
 	json.NewDecoder(resp.Body).Decode(&responseMap)
 	authorizedUrl, statusCode, err := userLogin.GetAuthorizedUrl(responseMap["csrfToken"])
 	if err != nil {
-		return statusCode, err.Error(), ""
+		return statusCode, err.Error(), nil
 	}
 
 	// get state
 	statusCode, err = userLogin.GetState(authorizedUrl)
 	if err != nil {
-		return statusCode, err.Error(), ""
+		return statusCode, err.Error(), nil
 	}
 
 	// check username
 	state, dx, statusCode, err := userLogin.CheckUsername(authorizedUrl, userLogin.Username)
 	if err != nil {
-		return statusCode, err.Error(), ""
+		return statusCode, err.Error(), nil
 	}
 
 	// set arkose captcha
 	statusCode, err = userLogin.setArkose(dx)
 	if err != nil {
-		return statusCode, err.Error(), ""
+		return statusCode, err.Error(), nil
 	}
 
 	// check password
 	_, statusCode, err = userLogin.CheckPassword(state, userLogin.Username, userLogin.Password)
 	if err != nil {
-		return statusCode, err.Error(), ""
+		return statusCode, err.Error(), nil
 	}
 
-	// get access token
-	accessToken, statusCode, err := userLogin.GetAccessTokenInternal("")
+	// // get access token
+	// accessToken, statusCode, err := userLogin.GetAccessTokenInternal("")
+	// if err != nil {
+	// 	return statusCode, err.Error(), ""
+	// }
+
+	chatgptUrl, err := url.Parse("https://chatgpt.com")
 	if err != nil {
-		return statusCode, err.Error(), ""
+		return -1, err.Error(), nil
 	}
 
-	return http.StatusOK, "", accessToken
+	return http.StatusOK, "", userLogin.client.GetCookies(chatgptUrl)
 }
 
 func (userLogin *UserLogin) GetAccessToken() string {
@@ -526,20 +536,20 @@ func (userLogin *UserLogin) SaveCookies() *Error {
 	return nil
 }
 
-func (userLogin *UserLogin) RenewWithCookies() *Error {
-	cookies := allCookies[userLogin.Username]
-	if len(cookies) == 0 {
-		return NewError("readCookie", 0, "no cookies")
-	}
-	u, _ := url.Parse("https://chat.openai.com")
-	userLogin.client.GetCookieJar().SetCookies(u, cookies)
-	accessToken, statusCode, err := userLogin.GetAccessTokenInternal("")
-	if err != nil {
-		return NewError("renewToken", statusCode, err.Error())
-	}
-	userLogin.Result.AccessToken = accessToken
-	return nil
-}
+// func (userLogin *UserLogin) RenewWithCookies() *Error {
+// 	cookies := allCookies[userLogin.Username]
+// 	if len(cookies) == 0 {
+// 		return NewError("readCookie", 0, "no cookies")
+// 	}
+// 	u, _ := url.Parse("https://chat.openai.com")
+// 	userLogin.client.GetCookieJar().SetCookies(u, cookies)
+// 	accessToken, statusCode, err := userLogin.GetAccessTokenInternal("")
+// 	if err != nil {
+// 		return NewError("renewToken", statusCode, err.Error())
+// 	}
+// 	userLogin.Result.AccessToken = accessToken
+// 	return nil
+// }
 
 func (userLogin *UserLogin) GetAuthResult() Result {
 	return userLogin.Result
