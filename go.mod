@@ -1,4 +1,4 @@
-module github.com/xqdoo00o/OpenAIAuth
+module github.com/danepoirier0/OpenAIAuth
 
 go 1.20
 

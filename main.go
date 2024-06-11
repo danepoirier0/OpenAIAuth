@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/xqdoo00o/OpenAIAuth/auth"
+	"github.com/danepoirier0/OpenAIAuth/auth"
 )
 
 func main() {
