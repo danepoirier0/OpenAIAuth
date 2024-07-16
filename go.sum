@@ -10,6 +10,8 @@ github.com/cloudflare/circl v1.3.8 h1:j+V8jJt09PoeMFIu2uh5JUyEaIHTXVOHslFoLNAKqw
 github.com/cloudflare/circl v1.3.8/go.mod h1:PDRU+oXvdD7KCtgKxW95M5Z8BpSCJXQORiZFnBQS5QU=
 github.com/danepoirier0/funcaptcha v0.0.0-20240613080821-448ad72295f7 h1:tAbBKD9C+ILWXp8ht023EQBZoV6wAxLqW4UsnUxh4aY=
 github.com/danepoirier0/funcaptcha v0.0.0-20240613080821-448ad72295f7/go.mod h1:1Hz8pdR8gAXsj3EZREFqOGL5wFDKAbKDdgVy0qztTzI=
+github.com/danepoirier0/funcaptcha v0.0.0-20240716063140-3c854eb1e2fc h1:MCRKHnSIXWJ5YB0rhGZFf2wOX+sdQsNjKSb9v6nZL7w=
+github.com/danepoirier0/funcaptcha v0.0.0-20240716063140-3c854eb1e2fc/go.mod h1:1Hz8pdR8gAXsj3EZREFqOGL5wFDKAbKDdgVy0qztTzI=
 github.com/google/uuid v1.6.0 h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=
 github.com/google/uuid v1.6.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
 github.com/klauspost/compress v1.17.8 h1:YcnTYrq7MikUT7k0Yb5eceMmALQPYBW/Xltxn0NAMnU=

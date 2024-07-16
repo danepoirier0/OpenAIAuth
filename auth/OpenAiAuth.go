@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/url"
 	"os"
 	"regexp"
@@ -262,6 +263,10 @@ func (userLogin *UserLogin) CheckPassword(state string, username string, passwor
 		return "", resp.StatusCode, errors.New(EmailOrPasswordInvalidErrorMessage)
 	}
 
+	if resp.StatusCode == http.StatusForbidden {
+		return "", resp.StatusCode, errors.New(NewCloudFlare403ErrorMessage(LoginPasswordUrl + state))
+	}
+
 	if resp.StatusCode == http.StatusFound {
 		req, _ := http.NewRequest(http.MethodGet, Auth0Url+resp.Header.Get("Location"), nil)
 
@@ -274,45 +279,46 @@ func (userLogin *UserLogin) CheckPassword(state string, username string, passwor
 		}
 
 		defer resp.Body.Close()
-		if resp.StatusCode == http.StatusFound {
-			location := resp.Header.Get("Location")
-			if strings.HasPrefix(location, "/u/mfa-otp-challenge") {
-				return "", http.StatusBadRequest, errors.New("Login with two-factor authentication enabled is not supported currently.")
-			}
 
-			req, _ := http.NewRequest(http.MethodGet, location, nil)
-
-			req.Header.Set("User-Agent", userLogin.userAgent)
-
-			resp, err := userLogin.client.Do(req)
-			if err != nil {
-				return "", http.StatusInternalServerError, err
-			}
-
-			defer resp.Body.Close()
-			if resp.StatusCode == http.StatusFound {
-				return "", http.StatusOK, nil
-			}
-
-			if resp.StatusCode == http.StatusTemporaryRedirect {
-				errorDescription := req.URL.Query().Get("error_description")
-				if errorDescription != "" {
-					return "", resp.StatusCode, errors.New(errorDescription)
-				}
-			}
-
-			return "", resp.StatusCode, errors.New(GetAccessTokenErrorMessage)
+		if resp.StatusCode != http.StatusForbidden && resp.StatusCode != http.StatusFound {
+			return "", resp.StatusCode, errors.New(EmailOrPasswordInvalidErrorMessage)
 		}
 
 		if resp.StatusCode == http.StatusForbidden {
 			return "", resp.StatusCode, errors.New(NewCloudFlare403ErrorMessage(Auth0Url + resp.Header.Get("Location")))
 		}
 
-		return "", resp.StatusCode, errors.New(EmailOrPasswordInvalidErrorMessage)
-	}
+		// resp.StatusCode == http.StatusFound
+		// location https://chatgpt.com/api/auth/callback/login-web?code=Q5D8XfC3T2ahbKKDzEevDX5-BDqGA6ZQP4uq8_AXZJyf9&state=uXsYQHYR-3vsM0miDp360l_m8f67tNtHQoRH0otA5YU
+		location := resp.Header.Get("Location")
+		if strings.HasPrefix(location, "/u/mfa-otp-challenge") {
+			return "", http.StatusBadRequest, errors.New("Login with two-factor authentication enabled is not supported currently.")
+		}
 
-	if resp.StatusCode == http.StatusForbidden {
-		return "", resp.StatusCode, errors.New(NewCloudFlare403ErrorMessage(LoginPasswordUrl + state))
+		req, _ = http.NewRequest(http.MethodGet, location, nil)
+
+		req.Header.Set("User-Agent", userLogin.userAgent)
+
+		resp, err = userLogin.client.Do(req)
+		if err != nil {
+			return "", http.StatusInternalServerError, err
+		}
+
+		defer resp.Body.Close()
+		if resp.StatusCode == http.StatusFound {
+			location := resp.Header.Get("Location")
+			log.Println("location xxxxx yyyyy zzzzzz ----  ", location)
+			return "", http.StatusOK, nil
+		}
+
+		if resp.StatusCode == http.StatusTemporaryRedirect {
+			errorDescription := req.URL.Query().Get("error_description")
+			if errorDescription != "" {
+				return "", resp.StatusCode, errors.New(errorDescription)
+			}
+		}
+
+		return "", resp.StatusCode, errors.New(GetAccessTokenErrorMessage)
 	}
 
 	return "", resp.StatusCode, nil
@@ -359,6 +365,64 @@ func (userLogin *UserLogin) Begin() *Error {
 		return NewError("begin", statusCode, err)
 	}
 	userLogin.Result.AuthCookies = authCookies
+	return nil
+}
+
+// 注册并 Verfiy Email之后, 首次登录调用这个方法
+func (userLogin *UserLogin) FirstRegLogin() error {
+	// get csrf token
+	req, _ := http.NewRequest(http.MethodGet, csrfUrl, nil)
+
+	req.Header.Set("User-Agent", userLogin.userAgent)
+
+	resp, err := userLogin.client.Do(req)
+	if err != nil {
+		return err
+	}
+
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("get %s response code is %d", csrfUrl, resp.StatusCode)
+	}
+
+	// get authorized url
+	responseMap := make(map[string]string)
+	json.NewDecoder(resp.Body).Decode(&responseMap)
+	authorizedUrl, statusCode, err := userLogin.GetAuthorizedUrl(responseMap["csrfToken"])
+	if err != nil {
+		return err
+	}
+	if statusCode != http.StatusOK {
+		return fmt.Errorf("GetAuthorizedUrl response code is %d", resp.StatusCode)
+	}
+
+	// get state
+	statusCode, err = userLogin.GetState(authorizedUrl)
+	if err != nil {
+		return err
+	}
+	if statusCode != http.StatusOK {
+		return fmt.Errorf("get %s response code is %d", authorizedUrl, statusCode)
+	}
+
+	// check username
+	state, dx, statusCode, err := userLogin.CheckUsername(authorizedUrl, userLogin.Username)
+	if err != nil {
+		return err
+	}
+
+	// set arkose captcha
+	statusCode, err = userLogin.setArkose(dx)
+	if err != nil {
+		return err
+	}
+
+	// check password
+	_, statusCode, err = userLogin.CheckPassword(state, userLogin.Username, userLogin.Password)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
