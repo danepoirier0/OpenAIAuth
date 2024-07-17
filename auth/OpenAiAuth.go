@@ -373,7 +373,7 @@ func (userLogin *UserLogin) Begin() *Error {
 }
 
 // 注册并 Verfiy Email之后, 首次登录调用这个方法
-func (userLogin *UserLogin) FirstRegLogin(deviceid string) error {
+func (userLogin *UserLogin) FirstRegLogin(deviceId string) error {
 	// 前1-5步跟普通登录一样，第6步接口一样但是302跳转之后就开始不一样
 	// 之后再调用其它的完成注册使用的方法
 
@@ -426,6 +426,46 @@ func (userLogin *UserLogin) FirstRegLogin(deviceid string) error {
 
 	// 6. check password
 	_, statusCode, err = userLogin.CheckPassword(state, userLogin.Username, userLogin.Password)
+	if err != nil {
+		return err
+	}
+
+	// 生成codeverifer和codeChallenge
+	codeVerifier, err := generateCodeVerifier()
+	if err != nil {
+		return err
+	}
+	codeChallenge, err := generateCodeChallenge(codeVerifier)
+	if err != nil {
+		return err
+	}
+
+	// 7.
+	cbCode, err := userLogin.GetFirstLoginCbCode(deviceId, state, codeChallenge)
+	if err != nil {
+		return err
+	}
+
+	// 8.
+	accessToken, err := userLogin.GetFirstLoginToken(cbCode, codeVerifier)
+	if err != nil {
+		return err
+	}
+
+	// 9.
+	arkosePayload, err := userLogin.GetFirstLoginArkosePayload(accessToken)
+	if err != nil {
+		return err
+	}
+
+	// 10.
+	arkoseToken, err := userLogin.GetFirstLoginInitArkoseToken(arkosePayload)
+	if err != nil {
+		return err
+	}
+
+	// 11.
+	userLogin.FirstLoginSubmitAccountInfo(userLogin.Username, accessToken, arkoseToken)
 	if err != nil {
 		return err
 	}
