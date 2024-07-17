@@ -729,13 +729,51 @@ func (userLogin *UserLogin) GetFirstLoginToken(code, codeVerifier string) (strin
 }
 
 // 注册后首次登录第九步
-func (userLogin *UserLogin) GetFirstLoginArkosePayload() {}
+func (userLogin *UserLogin) GetFirstLoginArkosePayload(accessToken string) (string, error) {
+	// POST 数据到 dashboard/onboarding/login
+	// 状态码为200表示成功，返回 ip_country(ip所在国家代码)、arkose_enabled、arkose_data_payload(下个接口主要使用这个字段)
+	getArkoseBlobValUrl := "https://api.openai.com/dashboard/onboarding/login"
+	bodyStr := string("{}")
+	req, err := http.NewRequest(http.MethodPost, getArkoseBlobValUrl, strings.NewReader(bodyStr))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", userLogin.userAgent)
+
+	resp, err := userLogin.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+
+	defer resp.Body.Close()
+	// 只有返回200才算成功
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("getArkoseBlobValUrl 出错，返回的状态码不是200。 resp.StatusCode is %d", resp.StatusCode)
+	}
+
+	var respStrcut map[string]string
+	err = json.NewDecoder(resp.Body).Decode(&respStrcut)
+	if err != nil {
+		return "", err
+	}
+
+	arkosePayload := respStrcut["arkose_data_payload"]
+	if arkosePayload == "" {
+		return "", fmt.Errorf("getArkoseBlobValUrl 返回的数据中不包含 arkose_data_payload 字段")
+	}
+
+	return arkosePayload, nil
+}
 
 // 注册后首次登录第十步, 获取初始化 Arkose
-func (userLogin *UserLogin) GetFirstLoginInitArkoseToken() {}
+func (userLogin *UserLogin) GetFirstLoginInitArkoseToken() (string, error) {
+
+	return "", errors.New("not implemented")
+}
 
 // 注册后首次登录第十一步，提交信息到create_account接口
-func (userLogin *UserLogin) FirstLoginSubmitAccountInfo() {}
+func (userLogin *UserLogin) FirstLoginSubmitAccountInfo() error {
+
+	return errors.New("not implemented")
+}
 
 // 构造返回url的CloudFlare 403错误
 func NewCloudFlare403ErrorMessage(url string) string {
