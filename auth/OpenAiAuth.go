@@ -440,17 +440,21 @@ func (userLogin *UserLogin) FirstRegLogin(deviceId string) error {
 		return err
 	}
 
+	log.Println("before 7")
 	// 7.
 	cbCode, err := userLogin.GetFirstLoginCbCode(deviceId, state, codeChallenge)
 	if err != nil {
 		return err
 	}
 
+	log.Println("before 8")
 	// 8.
 	accessToken, err := userLogin.GetFirstLoginToken(cbCode, codeVerifier)
 	if err != nil {
 		return err
 	}
+
+	log.Println("before 9")
 
 	// 9.
 	arkosePayload, err := userLogin.GetFirstLoginArkosePayload(accessToken)
@@ -458,12 +462,14 @@ func (userLogin *UserLogin) FirstRegLogin(deviceId string) error {
 		return err
 	}
 
+	log.Println("before 10")
 	// 10.
 	arkoseToken, err := userLogin.GetFirstLoginInitArkoseToken(arkosePayload)
 	if err != nil {
 		return err
 	}
 
+	log.Println("before 11")
 	// 11.
 	userLogin.FirstLoginSubmitAccountInfo(userLogin.Username, accessToken, arkoseToken)
 	if err != nil {
@@ -755,18 +761,19 @@ func (userLogin *UserLogin) GetFirstLoginToken(code, codeVerifier string) (strin
 		return "", fmt.Errorf("postTokenReqUrl 出错，返回的状态码不是200。 resp.StatusCode is %d", resp.StatusCode)
 	}
 
-	var respStrcut map[string]string
+	var respStrcut struct {
+		AccessToken string `json:"access_token"`
+	}
 	err = json.NewDecoder(resp.Body).Decode(&respStrcut)
 	if err != nil {
 		return "", err
 	}
 
-	accessToken := respStrcut["access_token"]
-	if accessToken == "" {
+	if respStrcut.AccessToken == "" {
 		return "", fmt.Errorf("postTokenReqUrl 返回的数据中不包含 access_token 字段")
 	}
 
-	return accessToken, nil
+	return respStrcut.AccessToken, nil
 }
 
 // 注册后首次登录第九步
@@ -777,7 +784,7 @@ func (userLogin *UserLogin) GetFirstLoginArkosePayload(accessToken string) (stri
 	bodyStr := string("{}")
 	req, err := http.NewRequest(http.MethodPost, getArkoseBlobValUrl, strings.NewReader(bodyStr))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", accessToken)
+	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("User-Agent", userLogin.userAgent)
 
 	resp, err := userLogin.client.Do(req)
@@ -791,18 +798,19 @@ func (userLogin *UserLogin) GetFirstLoginArkosePayload(accessToken string) (stri
 		return "", fmt.Errorf("getArkoseBlobValUrl 出错，返回的状态码不是200。 resp.StatusCode is %d", resp.StatusCode)
 	}
 
-	var respStrcut map[string]string
+	var respStrcut struct {
+		ArkoseDataPayload string `json:"arkose_data_payload"`
+	}
 	err = json.NewDecoder(resp.Body).Decode(&respStrcut)
 	if err != nil {
 		return "", err
 	}
 
-	arkosePayload := respStrcut["arkose_data_payload"]
-	if arkosePayload == "" {
+	if respStrcut.ArkoseDataPayload == "" {
 		return "", fmt.Errorf("getArkoseBlobValUrl 返回的数据中不包含 arkose_data_payload 字段")
 	}
 
-	return arkosePayload, nil
+	return respStrcut.ArkoseDataPayload, nil
 }
 
 // 注册后首次登录第十步, 获取初始化 Arkose
@@ -839,7 +847,7 @@ func (userLogin *UserLogin) FirstLoginSubmitAccountInfo(email, accessToken, arko
 	bodyStr := string(bodyBytes)
 	req, err := http.NewRequest(http.MethodPost, createAccountUrl, strings.NewReader(bodyStr))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", accessToken)
+	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("OpenAI-Sentinel-Arkose-Tokent", arkoseToken)
 	req.Header.Set("User-Agent", userLogin.userAgent)
 
