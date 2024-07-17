@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -9,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand"
 	"net/url"
 	"os"
 	"regexp"
@@ -737,6 +737,7 @@ func (userLogin *UserLogin) GetFirstLoginArkosePayload(accessToken string) (stri
 	bodyStr := string("{}")
 	req, err := http.NewRequest(http.MethodPost, getArkoseBlobValUrl, strings.NewReader(bodyStr))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", accessToken)
 	req.Header.Set("User-Agent", userLogin.userAgent)
 
 	resp, err := userLogin.client.Do(req)
@@ -775,9 +776,45 @@ func (userLogin *UserLogin) GetFirstLoginInitArkoseToken(arkoseDataBlob string) 
 }
 
 // 注册后首次登录第十一步，提交信息到create_account接口
-func (userLogin *UserLogin) FirstLoginSubmitAccountInfo() error {
+func (userLogin *UserLogin) FirstLoginSubmitAccountInfo(email, accessToken, arkoseToken string) error {
+	// POST 到 https://api.openai.com/dashboard/onboarding/create_account
+	// 返回 200 表示成功
+	createAccountUrl := "https://api.openai.com/dashboard/onboarding/create_account"
+	username := getUsernameFromEmail(email)
+	usernamePref := "aa"
+	if len(username) > 2 {
+		usernamePref = username[:2]
+	}
+	birthDate := getValidRegBirthDate()
+	postData := map[string]string{
+		"app":       "chat",
+		"name":      username,
+		"picture":   fmt.Sprintf("https://s.gravatar.com/avatar/a382407675377f722d9097bed06eabe7?s=480&r=pg&d=https://cdn.auth0.com/avatars/%s.png", usernamePref),
+		"birthdate": birthDate,
+	}
+	bodyBytes, err := json.Marshal(postData)
+	if err != nil {
+		return err
+	}
+	bodyStr := string(bodyBytes)
+	req, err := http.NewRequest(http.MethodPost, createAccountUrl, strings.NewReader(bodyStr))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", accessToken)
+	req.Header.Set("OpenAI-Sentinel-Arkose-Tokent", arkoseToken)
+	req.Header.Set("User-Agent", userLogin.userAgent)
 
-	return errors.New("not implemented")
+	resp, err := userLogin.client.Do(req)
+	if err != nil {
+		return err
+	}
+
+	defer resp.Body.Close()
+	// 只有返回200才算成功
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("postTokenReqUrl 出错，返回的状态码不是200。 resp.StatusCode is %d", resp.StatusCode)
+	}
+
+	return nil
 }
 
 // 构造返回url的CloudFlare 403错误
@@ -808,4 +845,30 @@ func generateCodeChallenge(codeVerifier string) (string, error) {
 	// 对哈希结果进行Base64 URL安全编码，并移除尾随的等号
 	codeChallenge := base64.URLEncoding.WithPadding(base64.NoPadding).EncodeToString(hashed)
 	return codeChallenge, nil
+}
+
+// 获取Email的@之前的部分
+func getUsernameFromEmail(email string) string {
+	if email == "" {
+		return "abcd"
+	}
+
+	emailArr := strings.Split(email, "@")
+
+	return emailArr[0]
+}
+
+func getValidRegBirthDate() string {
+	// 生成一个18-60岁的出生日期，形如 1999-01-01
+
+	now := time.Now()
+	// 生成一个介于18年前和60年前之间的随机数
+	rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
+	yearsAgo := rnd.Intn(43) + 18
+	date := now.AddDate(-yearsAgo, 0, 0)
+
+	// 将日期格式化成 "1999-01-01" 这样的形式
+	formattedDate := date.Format("2006-01-02")
+
+	return formattedDate
 }
