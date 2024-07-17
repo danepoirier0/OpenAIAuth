@@ -1,6 +1,9 @@
 package auth
 
 import (
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -369,8 +372,11 @@ func (userLogin *UserLogin) Begin() *Error {
 }
 
 // 注册并 Verfiy Email之后, 首次登录调用这个方法
-func (userLogin *UserLogin) FirstRegLogin() error {
-	// get csrf token
+func (userLogin *UserLogin) FirstRegLogin(deviceid string) error {
+	// 前1-5步跟普通登录一样，第6步接口一样但是302跳转之后就开始不一样
+	// 之后再调用其它的完成注册使用的方法
+
+	// 1. get csrf token
 	req, _ := http.NewRequest(http.MethodGet, csrfUrl, nil)
 
 	req.Header.Set("User-Agent", userLogin.userAgent)
@@ -385,7 +391,7 @@ func (userLogin *UserLogin) FirstRegLogin() error {
 		return fmt.Errorf("get %s response code is %d", csrfUrl, resp.StatusCode)
 	}
 
-	// get authorized url
+	// 2. get authorized url
 	responseMap := make(map[string]string)
 	json.NewDecoder(resp.Body).Decode(&responseMap)
 	authorizedUrl, statusCode, err := userLogin.GetAuthorizedUrl(responseMap["csrfToken"])
@@ -396,7 +402,7 @@ func (userLogin *UserLogin) FirstRegLogin() error {
 		return fmt.Errorf("GetAuthorizedUrl response code is %d", resp.StatusCode)
 	}
 
-	// get state
+	// 3. get state
 	statusCode, err = userLogin.GetState(authorizedUrl)
 	if err != nil {
 		return err
@@ -405,19 +411,19 @@ func (userLogin *UserLogin) FirstRegLogin() error {
 		return fmt.Errorf("get %s response code is %d", authorizedUrl, statusCode)
 	}
 
-	// check username
+	// 4. check username
 	state, dx, statusCode, err := userLogin.CheckUsername(authorizedUrl, userLogin.Username)
 	if err != nil {
 		return err
 	}
 
-	// set arkose captcha
+	// 5. set arkose captcha
 	statusCode, err = userLogin.setArkose(dx)
 	if err != nil {
 		return err
 	}
 
-	// check password
+	// 6. check password
 	_, statusCode, err = userLogin.CheckPassword(state, userLogin.Username, userLogin.Password)
 	if err != nil {
 		return err
@@ -619,8 +625,88 @@ func (userLogin *UserLogin) GetAuthResult() Result {
 	return userLogin.Result
 }
 
+func (userLogin *UserLogin) GetFirstLoginCbCode(deviceId, state, codeChallenge string) (string, error) {
+	// 构造形如 https://auth0.openai.com/authorize?issuer=xxx 的请求并获取返回的Code
+	// 返回形如 https://platform.openai.com/auth/callback?code=xxxx&state=yyyy
+	baseUrl := "https://auth0.openai.com/authorize"
+	parsedUrl, err := url.Parse(baseUrl)
+	if err != nil {
+		return "", err
+	}
+	qsParams := url.Values{
+		"issuer":                []string{"auth0.openai.com"},
+		"client_id":             []string{"DRivsnm2Mu42T3KOpqdtwB3NYviHYzwD"},
+		"audience":              []string{"https://api.openai.com/v1"},
+		"redirect_uri":          []string{"https://platform.openai.com/auth/callback"},
+		"device_id":             []string{deviceId},
+		"scope":                 []string{"openid profile email offline_access"},
+		"response_type":         []string{"code"},
+		"response_mode":         []string{"query"},
+		"state":                 []string{state},
+		"code_challenge":        []string{codeChallenge},
+		"code_challenge_method": []string{"S256"},
+		"auth0Client":           []string{"eyJuYW1lIjoiYXV0aDAtc3BhLWpzIiwidmVyc2lvbiI6IjEuMjEuMCJ9"},
+		// "nonce":        []string{},
+	}
+	// 将查询参数附加到URL上
+	parsedUrl.RawQuery = qsParams.Encode()
+
+	req, err := http.NewRequest(http.MethodGet, parsedUrl.String(), nil)
+
+	req.Header.Set("User-Agent", userLogin.userAgent)
+	// req.Header.Set("sec-ch-ua-arch", "x86")
+	// req.Header.Set("sec-ch-ua-bitness", "64")
+
+	resp, err := userLogin.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusFound {
+		return "", fmt.Errorf("跳转后获取 authorize?issuer 的返回状态码不是302,请检查。 状态码为 %d\n", resp.StatusCode)
+	}
+
+	location := resp.Header.Get("location")
+	// 从location中解析出code
+	parsedRespUrl, err := url.Parse(location)
+	if err != nil {
+		return "", err
+	}
+	code := parsedRespUrl.Query().Get("code")
+
+	if code == "" {
+		return "", fmt.Errorf("authorize?issuer 的返回url中没有code参数, 返回url为 %s \n", location)
+	}
+
+	return code, nil
+}
+
 // 构造返回url的CloudFlare 403错误
 func NewCloudFlare403ErrorMessage(url string) string {
 
 	return fmt.Sprintf("url %s may have encountered Cloudflare's anti-bot protection, please send the request with cookies", url)
+}
+
+func generateCodeVerifier() (string, error) {
+	randomBytes := make([]byte, 32)
+	_, err := rand.Read(randomBytes)
+	if err != nil {
+		return "", err
+	}
+	verifier := base64.URLEncoding.WithPadding(base64.NoPadding).EncodeToString(randomBytes)
+	return verifier, nil
+}
+
+func generateCodeChallenge(codeVerifier string) (string, error) {
+	// 对codeVerifier进行SHA-256哈希
+	h := sha256.New()
+	_, err := h.Write([]byte(codeVerifier))
+	if err != nil {
+		return "", err
+	}
+	hashed := h.Sum(nil)
+
+	// 对哈希结果进行Base64 URL安全编码，并移除尾随的等号
+	codeChallenge := base64.URLEncoding.WithPadding(base64.NoPadding).EncodeToString(hashed)
+	return codeChallenge, nil
 }
