@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -373,57 +374,59 @@ func (userLogin *UserLogin) Begin() *Error {
 }
 
 // 注册并 Verfiy Email之后, 首次登录调用这个方法
-func (userLogin *UserLogin) FirstRegLogin(deviceId string) error {
+//
+// chatGPTAuthLoginPage 为点击 Login 之后的 形如 auth.openai.com/authorize?client_id=xxx 的页面
+func (userLogin *UserLogin) FirstRegLogin(chatGPTAuthorizedPage, deviceId string) error {
 	// 前1-5步跟普通登录一样，第6步接口一样但是302跳转之后就开始不一样
 	// 之后再调用其它的完成注册使用的方法
 
-	// 1. get csrf token
-	req, _ := http.NewRequest(http.MethodGet, csrfUrl, nil)
+	// // 1. get csrf token
+	// req, _ := http.NewRequest(http.MethodGet, csrfUrl, nil)
+	// req.Header.Set("User-Agent", userLogin.userAgent)
+	// resp, err := userLogin.client.Do(req)
+	// if err != nil {
+	// 	return err
+	// }
+	// defer resp.Body.Close()
+	// if resp.StatusCode != http.StatusOK {
+	// 	return fmt.Errorf("get %s response code is %d", csrfUrl, resp.StatusCode)
+	// }
 
-	req.Header.Set("User-Agent", userLogin.userAgent)
+	// // 2. get authorized url
+	// responseMap := make(map[string]string)
+	// json.NewDecoder(resp.Body).Decode(&responseMap)
+	// authorizedUrl, statusCode, err := userLogin.GetAuthorizedUrl(responseMap["csrfToken"])
+	// if err != nil {
+	// 	return err
+	// }
+	// if statusCode != http.StatusOK {
+	// 	return fmt.Errorf("GetAuthorizedUrl response code is %d", resp.StatusCode)
+	// }
 
-	resp, err := userLogin.client.Do(req)
-	if err != nil {
-		return err
-	}
-
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("get %s response code is %d", csrfUrl, resp.StatusCode)
-	}
-
-	// 2. get authorized url
-	responseMap := make(map[string]string)
-	json.NewDecoder(resp.Body).Decode(&responseMap)
-	authorizedUrl, statusCode, err := userLogin.GetAuthorizedUrl(responseMap["csrfToken"])
-	if err != nil {
-		return err
-	}
-	if statusCode != http.StatusOK {
-		return fmt.Errorf("GetAuthorizedUrl response code is %d", resp.StatusCode)
-	}
-
-	// 3. get state
-	statusCode, err = userLogin.GetState(authorizedUrl)
-	if err != nil {
-		return err
-	}
-	if statusCode != http.StatusOK {
-		return fmt.Errorf("get %s response code is %d", authorizedUrl, statusCode)
-	}
+	// // 3. get state
+	// statusCode, err := userLogin.GetState(chatGPTAuthorizedPage)
+	// if err != nil {
+	// 	return err
+	// }
+	// if statusCode != http.StatusOK {
+	// 	return fmt.Errorf("get %s response code is %d", chatGPTAuthorizedPage, statusCode)
+	// }
 
 	// 4. check username
-	state, dx, statusCode, err := userLogin.CheckUsername(authorizedUrl, userLogin.Username)
+	state, dx, statusCode, err := userLogin.CheckUsername(chatGPTAuthorizedPage, userLogin.Username)
 	if err != nil {
 		return err
 	}
+	log.Println(" CheckUsername statusCode" + strconv.Itoa(statusCode))
 
+	log.Println("before 5")
 	// 5. set arkose captcha
 	statusCode, err = userLogin.setArkose(dx)
 	if err != nil {
 		return err
 	}
 
+	log.Println("before 6")
 	// 6. check password
 	_, statusCode, err = userLogin.CheckPassword(state, userLogin.Username, userLogin.Password)
 	if err != nil {
@@ -441,6 +444,7 @@ func (userLogin *UserLogin) FirstRegLogin(deviceId string) error {
 	}
 
 	log.Println("before 7")
+
 	// 7.
 	cbCode, err := userLogin.GetFirstLoginCbCode(deviceId, state, codeChallenge)
 	if err != nil {
@@ -471,7 +475,7 @@ func (userLogin *UserLogin) FirstRegLogin(deviceId string) error {
 
 	log.Println("before 11")
 	// 11.
-	userLogin.FirstLoginSubmitAccountInfo(userLogin.Username, accessToken, arkoseToken)
+	err = userLogin.FirstLoginSubmitAccountInfo(userLogin.Username, accessToken, arkoseToken)
 	if err != nil {
 		return err
 	}
@@ -827,6 +831,9 @@ func (userLogin *UserLogin) GetFirstLoginInitArkoseToken(arkoseDataBlob string) 
 func (userLogin *UserLogin) FirstLoginSubmitAccountInfo(email, accessToken, arkoseToken string) error {
 	// POST 到 https://api.openai.com/dashboard/onboarding/create_account
 	// 返回 200 表示成功
+
+	log.Printf("OpenAI-Sentinel-Arkose-Tokent %s", arkoseToken)
+
 	createAccountUrl := "https://api.openai.com/dashboard/onboarding/create_account"
 	username := getUsernameFromEmail(email)
 	usernamePref := "aa"
@@ -859,6 +866,11 @@ func (userLogin *UserLogin) FirstLoginSubmitAccountInfo(email, accessToken, arko
 	defer resp.Body.Close()
 	// 只有返回200才算成功
 	if resp.StatusCode != http.StatusOK {
+		respBytes, err := io.ReadAll(resp.Body)
+		if err == nil {
+			respStr := string(respBytes)
+			log.Printf("账号 %s 在调用 create_account 接口失败，状态码为 %d, 返回为为 %s", email, resp.StatusCode, respStr)
+		}
 		return fmt.Errorf("createAccountUrl 出错，返回的状态码不是200。 resp.StatusCode is %d", resp.StatusCode)
 	}
 
