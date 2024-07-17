@@ -625,6 +625,7 @@ func (userLogin *UserLogin) GetAuthResult() Result {
 	return userLogin.Result
 }
 
+// 注册后首次登录第七步
 func (userLogin *UserLogin) GetFirstLoginCbCode(deviceId, state, codeChallenge string) (string, error) {
 	// 构造形如 https://auth0.openai.com/authorize?issuer=xxx 的请求并获取返回的Code
 	// 返回形如 https://platform.openai.com/auth/callback?code=xxxx&state=yyyy
@@ -663,7 +664,7 @@ func (userLogin *UserLogin) GetFirstLoginCbCode(deviceId, state, codeChallenge s
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusFound {
-		return "", fmt.Errorf("跳转后获取 authorize?issuer 的返回状态码不是302,请检查。 状态码为 %d\n", resp.StatusCode)
+		return "", fmt.Errorf("跳转后获取 authorize?issuer 的返回状态码不是302,请检查。 状态码为 %d ", resp.StatusCode)
 	}
 
 	location := resp.Header.Get("location")
@@ -675,11 +676,66 @@ func (userLogin *UserLogin) GetFirstLoginCbCode(deviceId, state, codeChallenge s
 	code := parsedRespUrl.Query().Get("code")
 
 	if code == "" {
-		return "", fmt.Errorf("authorize?issuer 的返回url中没有code参数, 返回url为 %s \n", location)
+		return "", fmt.Errorf("authorize?issuer 的返回url中没有code参数, 返回url为 %s ", location)
 	}
 
 	return code, nil
 }
+
+// 注册后首次登录第八步
+func (userLogin *UserLogin) GetFirstLoginToken(code, codeVerifier string) (string, error) {
+	// 成功状态码为200, 返回的结构体包含access_token、refresh_token、id_token、scope(值为openid profile email offline_access)、expires_in、token_type(值为Bearer)
+	postTokenReqUrl := "https://auth0.openai.com/oauth/token"
+	postData := map[string]string{
+		"client_id":     "DRivsnm2Mu42T3KOpqdtwB3NYviHYzwD",
+		"grant_type":    "authorization_code",
+		"code":          code,
+		"code_verifier": codeVerifier,
+		"redirect_uri":  "https://platform.openai.com/auth/callback",
+	}
+	bodyBytes, err := json.Marshal(postData)
+	if err != nil {
+		return "", err
+	}
+	bodyStr := string(bodyBytes)
+	req, err := http.NewRequest(http.MethodPost, postTokenReqUrl, strings.NewReader(bodyStr))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Auth0-Client", "eyJuYW1lIjoiYXV0aDAtc3BhLWpzIiwidmVyc2lvbiI6IjEuMjEuMCJ9")
+	req.Header.Set("User-Agent", userLogin.userAgent)
+
+	resp, err := userLogin.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+
+	defer resp.Body.Close()
+	// 只有返回200才算成功
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("postTokenReqUrl 出错，返回的状态码不是200。 resp.StatusCode is %d", resp.StatusCode)
+	}
+
+	var respStrcut map[string]string
+	err = json.NewDecoder(resp.Body).Decode(&respStrcut)
+	if err != nil {
+		return "", err
+	}
+
+	accessToken := respStrcut["access_token"]
+	if accessToken == "" {
+		return "", fmt.Errorf("postTokenReqUrl 返回的数据中不包含 access_token 字段")
+	}
+
+	return accessToken, nil
+}
+
+// 注册后首次登录第九步
+func (userLogin *UserLogin) GetFirstLoginArkosePayload() {}
+
+// 注册后首次登录第十步, 获取初始化 Arkose
+func (userLogin *UserLogin) GetFirstLoginInitArkoseToken() {}
+
+// 注册后首次登录第十一步，提交信息到create_account接口
+func (userLogin *UserLogin) FirstLoginSubmitAccountInfo() {}
 
 // 构造返回url的CloudFlare 403错误
 func NewCloudFlare403ErrorMessage(url string) string {
