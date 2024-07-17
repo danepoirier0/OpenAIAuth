@@ -78,7 +78,7 @@ type UserLogin struct {
 	client             tls_client.HttpClient
 	Result             Result
 	userAgent          string
-	chatOpenAiCookies  string // chat.openai.com 需要的Cookies
+	chatGPTCookies     string // chatgpt.com 需要的Cookies
 	authOpenAiCookies  string // auth.openai.com 需要的Cookies
 	auth0OpenAiCookies string // auth0.openai.com 需要的Cookies
 }
@@ -109,7 +109,7 @@ func NewAuthenticator(emailAddress, password string, opts ...Option) *UserLogin 
 		Password:           password,
 		client:             NewHttpClient(""),
 		userAgent:          UserAgent,
-		chatOpenAiCookies:  "",
+		chatGPTCookies:     "",
 		authOpenAiCookies:  "",
 		auth0OpenAiCookies: "",
 	}
