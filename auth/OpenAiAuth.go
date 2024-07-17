@@ -811,7 +811,7 @@ func (userLogin *UserLogin) FirstLoginSubmitAccountInfo(email, accessToken, arko
 	defer resp.Body.Close()
 	// 只有返回200才算成功
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("postTokenReqUrl 出错，返回的状态码不是200。 resp.StatusCode is %d", resp.StatusCode)
+		return fmt.Errorf("createAccountUrl 出错，返回的状态码不是200。 resp.StatusCode is %d", resp.StatusCode)
 	}
 
 	return nil
