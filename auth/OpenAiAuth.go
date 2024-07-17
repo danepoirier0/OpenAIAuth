@@ -19,6 +19,7 @@ import (
 	tls_client "github.com/bogdanfinn/tls-client"
 	"github.com/bogdanfinn/tls-client/profiles"
 
+	"github.com/danepoirier0/funcaptcha"
 	arkose "github.com/danepoirier0/funcaptcha"
 )
 
@@ -764,9 +765,13 @@ func (userLogin *UserLogin) GetFirstLoginArkosePayload(accessToken string) (stri
 }
 
 // 注册后首次登录第十步, 获取初始化 Arkose
-func (userLogin *UserLogin) GetFirstLoginInitArkoseToken() (string, error) {
+func (userLogin *UserLogin) GetFirstLoginInitArkoseToken(arkoseDataBlob string) (string, error) {
+	arkResp, err := funcaptcha.GetOpenAiSignupToken(arkoseDataBlob, userLogin.client.GetProxy())
+	if err != nil {
+		return "", err
+	}
 
-	return "", errors.New("not implemented")
+	return arkResp.Token, nil
 }
 
 // 注册后首次登录第十一步，提交信息到create_account接口
