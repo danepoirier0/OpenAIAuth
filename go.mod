@@ -13,6 +13,7 @@ require (
 require (
 	github.com/andybalholm/brotli v1.1.0 // indirect
 	github.com/bogdanfinn/utls v1.6.1 // indirect
+	github.com/capsolver/capsolver-go v0.0.0-20240131070505-d99882bd4bc2 // indirect
 	github.com/cloudflare/circl v1.3.9 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/klauspost/compress v1.17.9 // indirect

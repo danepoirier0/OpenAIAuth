@@ -12,13 +12,13 @@ import (
 	"net/url"
 	"os"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
 	http "github.com/bogdanfinn/fhttp"
 	tls_client "github.com/bogdanfinn/tls-client"
 	"github.com/bogdanfinn/tls-client/profiles"
+	capsolver_go "github.com/capsolver/capsolver-go"
 
 	"github.com/danepoirier0/funcaptcha"
 	arkose "github.com/danepoirier0/funcaptcha"
@@ -76,6 +76,7 @@ const (
 type UserLogin struct {
 	Username           string
 	Password           string
+	CapsolverApiKey    string
 	client             tls_client.HttpClient
 	Result             Result
 	userAgent          string
@@ -104,10 +105,11 @@ func getHttpClient() tls_client.HttpClient {
 	return client
 }
 
-func NewAuthenticator(emailAddress, password string, opts ...Option) *UserLogin {
+func NewAuthenticator(emailAddress, password, capsolverApiKey string, opts ...Option) *UserLogin {
 	userLogin := &UserLogin{
 		Username:           emailAddress,
 		Password:           password,
+		CapsolverApiKey:    capsolverApiKey,
 		client:             NewHttpClient(""),
 		userAgent:          UserAgent,
 		chatGPTCookies:     "",
@@ -312,7 +314,7 @@ func (userLogin *UserLogin) CheckPassword(state string, username string, passwor
 		defer resp.Body.Close()
 		if resp.StatusCode == http.StatusFound {
 			location := resp.Header.Get("Location")
-			log.Println("location xxxxx yyyyy zzzzzz ----  ", location)
+			log.Println("login location ----  ", location)
 			return "", http.StatusOK, nil
 		}
 
@@ -376,57 +378,60 @@ func (userLogin *UserLogin) Begin() *Error {
 // 注册并 Verfiy Email之后, 首次登录调用这个方法
 //
 // chatGPTAuthLoginPage 为点击 Login 之后的 形如 auth.openai.com/authorize?client_id=xxx 的页面
-func (userLogin *UserLogin) FirstRegLogin(chatGPTAuthorizedPage, deviceId string) error {
+func (userLogin *UserLogin) FirstRegLogin(deviceId string) error {
 	// 前1-5步跟普通登录一样，第6步接口一样但是302跳转之后就开始不一样
 	// 之后再调用其它的完成注册使用的方法
 
-	// // 1. get csrf token
-	// req, _ := http.NewRequest(http.MethodGet, csrfUrl, nil)
-	// req.Header.Set("User-Agent", userLogin.userAgent)
-	// resp, err := userLogin.client.Do(req)
-	// if err != nil {
-	// 	return err
-	// }
-	// defer resp.Body.Close()
-	// if resp.StatusCode != http.StatusOK {
-	// 	return fmt.Errorf("get %s response code is %d", csrfUrl, resp.StatusCode)
-	// }
+	log.Println("step 1")
+	// 1. get csrf token
+	req, _ := http.NewRequest(http.MethodGet, csrfUrl, nil)
+	req.Header.Set("User-Agent", userLogin.userAgent)
+	resp, err := userLogin.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("get %s response code is %d", csrfUrl, resp.StatusCode)
+	}
 
-	// // 2. get authorized url
-	// responseMap := make(map[string]string)
-	// json.NewDecoder(resp.Body).Decode(&responseMap)
-	// authorizedUrl, statusCode, err := userLogin.GetAuthorizedUrl(responseMap["csrfToken"])
-	// if err != nil {
-	// 	return err
-	// }
-	// if statusCode != http.StatusOK {
-	// 	return fmt.Errorf("GetAuthorizedUrl response code is %d", resp.StatusCode)
-	// }
+	log.Println("step 2")
+	// 2. get authorized url
+	responseMap := make(map[string]string)
+	json.NewDecoder(resp.Body).Decode(&responseMap)
+	chatGPTAuthorizedPage, statusCode, err := userLogin.GetAuthorizedUrl(responseMap["csrfToken"])
+	if err != nil {
+		return err
+	}
+	if statusCode != http.StatusOK {
+		return fmt.Errorf("GetAuthorizedUrl response code is %d", resp.StatusCode)
+	}
 
-	// // 3. get state
-	// statusCode, err := userLogin.GetState(chatGPTAuthorizedPage)
-	// if err != nil {
-	// 	return err
-	// }
-	// if statusCode != http.StatusOK {
-	// 	return fmt.Errorf("get %s response code is %d", chatGPTAuthorizedPage, statusCode)
-	// }
+	log.Println("step 3")
+	// 3. get state
+	statusCode, err = userLogin.GetState(chatGPTAuthorizedPage)
+	if err != nil {
+		return err
+	}
+	if statusCode != http.StatusOK {
+		return fmt.Errorf("get %s response code is %d", chatGPTAuthorizedPage, statusCode)
+	}
 
+	log.Println("step 4")
 	// 4. check username
 	state, dx, statusCode, err := userLogin.CheckUsername(chatGPTAuthorizedPage, userLogin.Username)
 	if err != nil {
 		return err
 	}
-	log.Println(" CheckUsername statusCode" + strconv.Itoa(statusCode))
 
-	log.Println("before 5")
+	log.Println("step 5")
 	// 5. set arkose captcha
 	statusCode, err = userLogin.setArkose(dx)
 	if err != nil {
 		return err
 	}
 
-	log.Println("before 6")
+	log.Println("step 6")
 	// 6. check password
 	_, statusCode, err = userLogin.CheckPassword(state, userLogin.Username, userLogin.Password)
 	if err != nil {
@@ -443,7 +448,7 @@ func (userLogin *UserLogin) FirstRegLogin(chatGPTAuthorizedPage, deviceId string
 		return err
 	}
 
-	log.Println("before 7")
+	log.Println("step 7")
 
 	// 7.
 	cbCode, err := userLogin.GetFirstLoginCbCode(deviceId, state, codeChallenge)
@@ -451,14 +456,14 @@ func (userLogin *UserLogin) FirstRegLogin(chatGPTAuthorizedPage, deviceId string
 		return err
 	}
 
-	log.Println("before 8")
+	log.Println("step 8")
 	// 8.
 	accessToken, err := userLogin.GetFirstLoginToken(cbCode, codeVerifier)
 	if err != nil {
 		return err
 	}
 
-	log.Println("before 9")
+	log.Println("step 9")
 
 	// 9.
 	arkosePayload, err := userLogin.GetFirstLoginArkosePayload(accessToken)
@@ -466,14 +471,14 @@ func (userLogin *UserLogin) FirstRegLogin(chatGPTAuthorizedPage, deviceId string
 		return err
 	}
 
-	log.Println("before 10")
+	log.Println("step 10")
 	// 10.
-	arkoseToken, err := userLogin.GetFirstLoginInitArkoseToken(arkosePayload)
+	arkoseToken, err := userLogin.GetFirstLoginInitArkoseTokenFromCapsolver(arkosePayload)
 	if err != nil {
 		return err
 	}
 
-	log.Println("before 11")
+	log.Println("step 11")
 	// 11.
 	err = userLogin.FirstLoginSubmitAccountInfo(userLogin.Username, accessToken, arkoseToken)
 	if err != nil {
@@ -817,13 +822,70 @@ func (userLogin *UserLogin) GetFirstLoginArkosePayload(accessToken string) (stri
 	return respStrcut.ArkoseDataPayload, nil
 }
 
-// 注册后首次登录第十步, 获取初始化 Arkose
-func (userLogin *UserLogin) GetFirstLoginInitArkoseToken(arkoseDataBlob string) (string, error) {
-	arkResp, err := funcaptcha.GetOpenAiSignupToken(arkoseDataBlob, userLogin.client.GetProxy())
+// 注册后首次登录第十步(选项1.从远程的单独url获取), 获取初始化 Arkose
+func (userLogin *UserLogin) GetFirstLoginInitArkoseTokenFromRemoteUrl(arkoseDataBlob string) (string, error) {
+
+	getArkoseTokenUrl := "http://47.89.134.228:9109/token?authkey=chat88&dx=" + url.QueryEscape(arkoseDataBlob)
+
+	req, err := http.NewRequest(http.MethodGet, getArkoseTokenUrl, nil)
+	req.Header.Set("User-Agent", userLogin.userAgent)
+
+	resp, err := userLogin.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		respBytes, err := io.ReadAll(resp.Body)
+		if err == nil {
+			log.Println("respBytes " + string(respBytes))
+		}
+		return "", fmt.Errorf("resp.StatusCode is %d", resp.StatusCode)
+	}
+
+	respBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", err
 	}
 
+	var respStruct struct {
+		Msg   string `json:"msg"`
+		Token string `json:"token"`
+	}
+	err = json.Unmarshal(respBytes, &respStruct)
+	if err != nil {
+		return "", err
+	}
+
+	log.Println("respStruct.Token " + respStruct.Token)
+
+	return respStruct.Token, nil
+}
+
+// 注册后首次登录第十步(选项2.从capsolver获取), 获取初始化 Arkose
+func (userLogin *UserLogin) GetFirstLoginInitArkoseTokenFromCapsolver(arkoseDataBlob string) (string, error) {
+	capSolver := capsolver_go.CapSolver{ApiKey: userLogin.CapsolverApiKey}
+	resp, err := capSolver.Solve(map[string]any{
+		"type":             "FunCaptchaTaskProxyLess",
+		"websiteURL":       "https://platform.openai.com",
+		"websitePublicKey": "0655BC92-82E1-43D9-B32E-9DF9B01AF50C",
+		"userAgent":        userLogin.userAgent,
+		"data":             "{\"blob\": \"" + arkoseDataBlob + "\"}",
+	})
+	if err != nil {
+		log.Println("GetFirstLoginInitArkoseTokenFromCapsolver Error " + err.Error())
+		return "", err
+	}
+
+	return resp.Solution.Token, nil
+}
+
+// 注册后首次登录第十步(选项3.使用自己的har+funcapcha生成), 获取初始化 Arkose
+func (userLogin *UserLogin) GetFirstLoginInitArkoseTokenFromFuncaptcha(arkoseDataBlob string) (string, error) {
+	arkResp, err := funcaptcha.GetOpenAiSignupToken(arkoseDataBlob, userLogin.client.GetProxy())
+	if err != nil {
+		return "", err
+	}
 	return arkResp.Token, nil
 }
 
@@ -831,8 +893,6 @@ func (userLogin *UserLogin) GetFirstLoginInitArkoseToken(arkoseDataBlob string) 
 func (userLogin *UserLogin) FirstLoginSubmitAccountInfo(email, accessToken, arkoseToken string) error {
 	// POST 到 https://api.openai.com/dashboard/onboarding/create_account
 	// 返回 200 表示成功
-
-	log.Printf("OpenAI-Sentinel-Arkose-Tokent %s", arkoseToken)
 
 	createAccountUrl := "https://api.openai.com/dashboard/onboarding/create_account"
 	username := getUsernameFromEmail(email)
@@ -855,7 +915,7 @@ func (userLogin *UserLogin) FirstLoginSubmitAccountInfo(email, accessToken, arko
 	req, err := http.NewRequest(http.MethodPost, createAccountUrl, strings.NewReader(bodyStr))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+accessToken)
-	req.Header.Set("OpenAI-Sentinel-Arkose-Tokent", arkoseToken)
+	req.Header.Set("OpenAI-Sentinel-Arkose-Token", arkoseToken)
 	req.Header.Set("User-Agent", userLogin.userAgent)
 
 	resp, err := userLogin.client.Do(req)
