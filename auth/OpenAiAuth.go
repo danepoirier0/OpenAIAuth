@@ -718,9 +718,6 @@ func (userLogin *UserLogin) GetFirstLoginCbCode(deviceId, state, codeChallenge s
 	req, err := http.NewRequest(http.MethodGet, parsedUrl.String(), nil)
 
 	req.Header.Set("User-Agent", userLogin.userAgent)
-	if userLogin.auth0OpenAiCookies != "" {
-		req.Header.Set("Cookie", userLogin.auth0OpenAiCookies)
-	}
 
 	resp, err := userLogin.client.Do(req)
 	if err != nil {
