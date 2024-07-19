@@ -1,10 +1,14 @@
 package auth
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log"
+	"math/rand"
 	"net/url"
 	"os"
 	"regexp"
@@ -14,7 +18,9 @@ import (
 	http "github.com/bogdanfinn/fhttp"
 	tls_client "github.com/bogdanfinn/tls-client"
 	"github.com/bogdanfinn/tls-client/profiles"
+	capsolver_go "github.com/capsolver/capsolver-go"
 
+	"github.com/danepoirier0/funcaptcha"
 	arkose "github.com/danepoirier0/funcaptcha"
 )
 
@@ -70,10 +76,11 @@ const (
 type UserLogin struct {
 	Username           string
 	Password           string
+	CapsolverApiKey    string
 	client             tls_client.HttpClient
 	Result             Result
 	userAgent          string
-	chatOpenAiCookies  string // chat.openai.com 需要的Cookies
+	chatGPTCookies     string // chatgpt.com 需要的Cookies
 	authOpenAiCookies  string // auth.openai.com 需要的Cookies
 	auth0OpenAiCookies string // auth0.openai.com 需要的Cookies
 }
@@ -98,13 +105,14 @@ func getHttpClient() tls_client.HttpClient {
 	return client
 }
 
-func NewAuthenticator(emailAddress, password string, opts ...Option) *UserLogin {
+func NewAuthenticator(emailAddress, password, capsolverApiKey string, opts ...Option) *UserLogin {
 	userLogin := &UserLogin{
 		Username:           emailAddress,
 		Password:           password,
+		CapsolverApiKey:    capsolverApiKey,
 		client:             NewHttpClient(""),
 		userAgent:          UserAgent,
-		chatOpenAiCookies:  "",
+		chatGPTCookies:     "",
 		authOpenAiCookies:  "",
 		auth0OpenAiCookies: "",
 	}
@@ -262,6 +270,10 @@ func (userLogin *UserLogin) CheckPassword(state string, username string, passwor
 		return "", resp.StatusCode, errors.New(EmailOrPasswordInvalidErrorMessage)
 	}
 
+	if resp.StatusCode == http.StatusForbidden {
+		return "", resp.StatusCode, errors.New(NewCloudFlare403ErrorMessage(LoginPasswordUrl + state))
+	}
+
 	if resp.StatusCode == http.StatusFound {
 		req, _ := http.NewRequest(http.MethodGet, Auth0Url+resp.Header.Get("Location"), nil)
 
@@ -274,45 +286,46 @@ func (userLogin *UserLogin) CheckPassword(state string, username string, passwor
 		}
 
 		defer resp.Body.Close()
-		if resp.StatusCode == http.StatusFound {
-			location := resp.Header.Get("Location")
-			if strings.HasPrefix(location, "/u/mfa-otp-challenge") {
-				return "", http.StatusBadRequest, errors.New("Login with two-factor authentication enabled is not supported currently.")
-			}
 
-			req, _ := http.NewRequest(http.MethodGet, location, nil)
-
-			req.Header.Set("User-Agent", userLogin.userAgent)
-
-			resp, err := userLogin.client.Do(req)
-			if err != nil {
-				return "", http.StatusInternalServerError, err
-			}
-
-			defer resp.Body.Close()
-			if resp.StatusCode == http.StatusFound {
-				return "", http.StatusOK, nil
-			}
-
-			if resp.StatusCode == http.StatusTemporaryRedirect {
-				errorDescription := req.URL.Query().Get("error_description")
-				if errorDescription != "" {
-					return "", resp.StatusCode, errors.New(errorDescription)
-				}
-			}
-
-			return "", resp.StatusCode, errors.New(GetAccessTokenErrorMessage)
+		if resp.StatusCode != http.StatusForbidden && resp.StatusCode != http.StatusFound {
+			return "", resp.StatusCode, errors.New(EmailOrPasswordInvalidErrorMessage)
 		}
 
 		if resp.StatusCode == http.StatusForbidden {
 			return "", resp.StatusCode, errors.New(NewCloudFlare403ErrorMessage(Auth0Url + resp.Header.Get("Location")))
 		}
 
-		return "", resp.StatusCode, errors.New(EmailOrPasswordInvalidErrorMessage)
-	}
+		// resp.StatusCode == http.StatusFound
+		// location https://chatgpt.com/api/auth/callback/login-web?code=Q5D8XfC3T2ahbKKDzEevDX5-BDqGA6ZQP4uq8_AXZJyf9&state=uXsYQHYR-3vsM0miDp360l_m8f67tNtHQoRH0otA5YU
+		location := resp.Header.Get("Location")
+		if strings.HasPrefix(location, "/u/mfa-otp-challenge") {
+			return "", http.StatusBadRequest, errors.New("Login with two-factor authentication enabled is not supported currently.")
+		}
 
-	if resp.StatusCode == http.StatusForbidden {
-		return "", resp.StatusCode, errors.New(NewCloudFlare403ErrorMessage(LoginPasswordUrl + state))
+		req, _ = http.NewRequest(http.MethodGet, location, nil)
+
+		req.Header.Set("User-Agent", userLogin.userAgent)
+
+		resp, err = userLogin.client.Do(req)
+		if err != nil {
+			return "", http.StatusInternalServerError, err
+		}
+
+		defer resp.Body.Close()
+		if resp.StatusCode == http.StatusFound {
+			location := resp.Header.Get("Location")
+			log.Println("login location ----  ", location)
+			return "", http.StatusOK, nil
+		}
+
+		if resp.StatusCode == http.StatusTemporaryRedirect {
+			errorDescription := req.URL.Query().Get("error_description")
+			if errorDescription != "" {
+				return "", resp.StatusCode, errors.New(errorDescription)
+			}
+		}
+
+		return "", resp.StatusCode, errors.New(GetAccessTokenErrorMessage)
 	}
 
 	return "", resp.StatusCode, nil
@@ -359,6 +372,119 @@ func (userLogin *UserLogin) Begin() *Error {
 		return NewError("begin", statusCode, err)
 	}
 	userLogin.Result.AuthCookies = authCookies
+	return nil
+}
+
+// 注册并 Verfiy Email之后, 首次登录调用这个方法
+//
+// chatGPTAuthLoginPage 为点击 Login 之后的 形如 auth.openai.com/authorize?client_id=xxx 的页面
+func (userLogin *UserLogin) FirstRegLogin(deviceId string) error {
+	// 前1-5步跟普通登录一样，第6步接口一样但是302跳转之后就开始不一样
+	// 之后再调用其它的完成注册使用的方法
+
+	log.Println("step 1")
+	// 1. get csrf token
+	req, _ := http.NewRequest(http.MethodGet, csrfUrl, nil)
+	req.Header.Set("User-Agent", userLogin.userAgent)
+	resp, err := userLogin.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("get %s response code is %d", csrfUrl, resp.StatusCode)
+	}
+
+	log.Println("step 2")
+	// 2. get authorized url
+	responseMap := make(map[string]string)
+	json.NewDecoder(resp.Body).Decode(&responseMap)
+	chatGPTAuthorizedPage, statusCode, err := userLogin.GetAuthorizedUrl(responseMap["csrfToken"])
+	if err != nil {
+		return err
+	}
+	if statusCode != http.StatusOK {
+		return fmt.Errorf("GetAuthorizedUrl response code is %d", resp.StatusCode)
+	}
+
+	log.Println("step 3")
+	// 3. get state
+	statusCode, err = userLogin.GetState(chatGPTAuthorizedPage)
+	if err != nil {
+		return err
+	}
+	if statusCode != http.StatusOK {
+		return fmt.Errorf("get %s response code is %d", chatGPTAuthorizedPage, statusCode)
+	}
+
+	log.Println("step 4")
+	// 4. check username
+	state, dx, statusCode, err := userLogin.CheckUsername(chatGPTAuthorizedPage, userLogin.Username)
+	if err != nil {
+		return err
+	}
+
+	log.Println("step 5")
+	// 5. set arkose captcha
+	statusCode, err = userLogin.setArkose(dx)
+	if err != nil {
+		return err
+	}
+
+	log.Println("step 6")
+	// 6. check password
+	_, statusCode, err = userLogin.CheckPassword(state, userLogin.Username, userLogin.Password)
+	if err != nil {
+		return err
+	}
+
+	// 生成codeverifer和codeChallenge
+	codeVerifier, err := generateCodeVerifier()
+	if err != nil {
+		return err
+	}
+	codeChallenge, err := generateCodeChallenge(codeVerifier)
+	if err != nil {
+		return err
+	}
+
+	log.Println("step 7")
+
+	// 7.
+	cbCode, err := userLogin.GetFirstLoginCbCode(deviceId, state, codeChallenge)
+	if err != nil {
+		return err
+	}
+
+	log.Println("step 8")
+	// 8.
+	accessToken, err := userLogin.GetFirstLoginToken(cbCode, codeVerifier)
+	if err != nil {
+		return err
+	}
+
+	log.Println("step 9")
+
+	// 9.
+	arkosePayload, err := userLogin.GetFirstLoginArkosePayload(accessToken)
+	if err != nil {
+		return err
+	}
+
+	log.Println("step 10")
+	// 10.
+	arkoseToken, err := userLogin.GetFirstLoginInitArkoseTokenFromCapsolver(arkosePayload)
+	if err != nil {
+		return err
+	}
+
+	log.Println("step 11")
+	// 11.
+	err = userLogin.FirstLoginSubmitAccountInfo(userLogin.Username, accessToken, arkoseToken)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -555,8 +681,314 @@ func (userLogin *UserLogin) GetAuthResult() Result {
 	return userLogin.Result
 }
 
+// 注册后首次登录第七步
+func (userLogin *UserLogin) GetFirstLoginCbCode(deviceId, state, codeChallenge string) (string, error) {
+	// 构造形如 https://auth0.openai.com/authorize?issuer=xxx 的请求并获取返回的Code
+	// 返回形如 https://platform.openai.com/auth/callback?code=xxxx&state=yyyy
+	baseUrl := "https://auth0.openai.com/authorize"
+	parsedUrl, err := url.Parse(baseUrl)
+	if err != nil {
+		return "", err
+	}
+	qsParams := url.Values{
+		"issuer":                []string{"auth0.openai.com"},
+		"client_id":             []string{"DRivsnm2Mu42T3KOpqdtwB3NYviHYzwD"},
+		"audience":              []string{"https://api.openai.com/v1"},
+		"redirect_uri":          []string{"https://platform.openai.com/auth/callback"},
+		"device_id":             []string{deviceId},
+		"scope":                 []string{"openid profile email offline_access"},
+		"response_type":         []string{"code"},
+		"response_mode":         []string{"query"},
+		"state":                 []string{state},
+		"code_challenge":        []string{codeChallenge},
+		"code_challenge_method": []string{"S256"},
+		"auth0Client":           []string{"eyJuYW1lIjoiYXV0aDAtc3BhLWpzIiwidmVyc2lvbiI6IjEuMjEuMCJ9"},
+		// "nonce":        []string{},
+	}
+	// 将查询参数附加到URL上
+	parsedUrl.RawQuery = qsParams.Encode()
+
+	req, err := http.NewRequest(http.MethodGet, parsedUrl.String(), nil)
+
+	req.Header.Set("User-Agent", userLogin.userAgent)
+	// req.Header.Set("sec-ch-ua-arch", "x86")
+	// req.Header.Set("sec-ch-ua-bitness", "64")
+
+	resp, err := userLogin.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusFound {
+		return "", fmt.Errorf("跳转后获取 authorize?issuer 的返回状态码不是302,请检查。 状态码为 %d ", resp.StatusCode)
+	}
+
+	location := resp.Header.Get("location")
+	// 从location中解析出code
+	parsedRespUrl, err := url.Parse(location)
+	if err != nil {
+		return "", err
+	}
+	code := parsedRespUrl.Query().Get("code")
+
+	if code == "" {
+		return "", fmt.Errorf("authorize?issuer 的返回url中没有code参数, 返回url为 %s ", location)
+	}
+
+	return code, nil
+}
+
+// 注册后首次登录第八步
+func (userLogin *UserLogin) GetFirstLoginToken(code, codeVerifier string) (string, error) {
+	// 成功状态码为200, 返回的结构体包含access_token、refresh_token、id_token、scope(值为openid profile email offline_access)、expires_in、token_type(值为Bearer)
+	postTokenReqUrl := "https://auth0.openai.com/oauth/token"
+	postData := map[string]string{
+		"client_id":     "DRivsnm2Mu42T3KOpqdtwB3NYviHYzwD",
+		"grant_type":    "authorization_code",
+		"code":          code,
+		"code_verifier": codeVerifier,
+		"redirect_uri":  "https://platform.openai.com/auth/callback",
+	}
+	bodyBytes, err := json.Marshal(postData)
+	if err != nil {
+		return "", err
+	}
+	bodyStr := string(bodyBytes)
+	req, err := http.NewRequest(http.MethodPost, postTokenReqUrl, strings.NewReader(bodyStr))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Auth0-Client", "eyJuYW1lIjoiYXV0aDAtc3BhLWpzIiwidmVyc2lvbiI6IjEuMjEuMCJ9")
+	req.Header.Set("User-Agent", userLogin.userAgent)
+
+	resp, err := userLogin.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+
+	defer resp.Body.Close()
+	// 只有返回200才算成功
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("postTokenReqUrl 出错，返回的状态码不是200。 resp.StatusCode is %d", resp.StatusCode)
+	}
+
+	var respStrcut struct {
+		AccessToken string `json:"access_token"`
+	}
+	err = json.NewDecoder(resp.Body).Decode(&respStrcut)
+	if err != nil {
+		return "", err
+	}
+
+	if respStrcut.AccessToken == "" {
+		return "", fmt.Errorf("postTokenReqUrl 返回的数据中不包含 access_token 字段")
+	}
+
+	return respStrcut.AccessToken, nil
+}
+
+// 注册后首次登录第九步
+func (userLogin *UserLogin) GetFirstLoginArkosePayload(accessToken string) (string, error) {
+	// POST 数据到 dashboard/onboarding/login
+	// 状态码为200表示成功，返回 ip_country(ip所在国家代码)、arkose_enabled、arkose_data_payload(下个接口主要使用这个字段)
+	getArkoseBlobValUrl := "https://api.openai.com/dashboard/onboarding/login"
+	bodyStr := string("{}")
+	req, err := http.NewRequest(http.MethodPost, getArkoseBlobValUrl, strings.NewReader(bodyStr))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("User-Agent", userLogin.userAgent)
+
+	resp, err := userLogin.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+
+	defer resp.Body.Close()
+	// 只有返回200才算成功
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("getArkoseBlobValUrl 出错，返回的状态码不是200。 resp.StatusCode is %d", resp.StatusCode)
+	}
+
+	var respStrcut struct {
+		ArkoseDataPayload string `json:"arkose_data_payload"`
+	}
+	err = json.NewDecoder(resp.Body).Decode(&respStrcut)
+	if err != nil {
+		return "", err
+	}
+
+	if respStrcut.ArkoseDataPayload == "" {
+		return "", fmt.Errorf("getArkoseBlobValUrl 返回的数据中不包含 arkose_data_payload 字段")
+	}
+
+	return respStrcut.ArkoseDataPayload, nil
+}
+
+// 注册后首次登录第十步(选项1.从远程的单独url获取), 获取初始化 Arkose
+func (userLogin *UserLogin) GetFirstLoginInitArkoseTokenFromRemoteUrl(arkoseDataBlob string) (string, error) {
+
+	getArkoseTokenUrl := "http://47.89.134.228:9109/token?authkey=chat88&dx=" + url.QueryEscape(arkoseDataBlob)
+
+	req, err := http.NewRequest(http.MethodGet, getArkoseTokenUrl, nil)
+	req.Header.Set("User-Agent", userLogin.userAgent)
+
+	resp, err := userLogin.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		respBytes, err := io.ReadAll(resp.Body)
+		if err == nil {
+			log.Println("respBytes " + string(respBytes))
+		}
+		return "", fmt.Errorf("resp.StatusCode is %d", resp.StatusCode)
+	}
+
+	respBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	var respStruct struct {
+		Msg   string `json:"msg"`
+		Token string `json:"token"`
+	}
+	err = json.Unmarshal(respBytes, &respStruct)
+	if err != nil {
+		return "", err
+	}
+
+	log.Println("respStruct.Token " + respStruct.Token)
+
+	return respStruct.Token, nil
+}
+
+// 注册后首次登录第十步(选项2.从capsolver获取), 获取初始化 Arkose
+func (userLogin *UserLogin) GetFirstLoginInitArkoseTokenFromCapsolver(arkoseDataBlob string) (string, error) {
+	capSolver := capsolver_go.CapSolver{ApiKey: userLogin.CapsolverApiKey}
+	resp, err := capSolver.Solve(map[string]any{
+		"type":             "FunCaptchaTaskProxyLess",
+		"websiteURL":       "https://platform.openai.com",
+		"websitePublicKey": "0655BC92-82E1-43D9-B32E-9DF9B01AF50C",
+		"userAgent":        userLogin.userAgent,
+		"data":             "{\"blob\": \"" + arkoseDataBlob + "\"}",
+	})
+	if err != nil {
+		log.Println("GetFirstLoginInitArkoseTokenFromCapsolver Error " + err.Error())
+		return "", err
+	}
+
+	return resp.Solution.Token, nil
+}
+
+// 注册后首次登录第十步(选项3.使用自己的har+funcapcha生成), 获取初始化 Arkose
+func (userLogin *UserLogin) GetFirstLoginInitArkoseTokenFromFuncaptcha(arkoseDataBlob string) (string, error) {
+	arkResp, err := funcaptcha.GetOpenAiSignupToken(arkoseDataBlob, userLogin.client.GetProxy())
+	if err != nil {
+		return "", err
+	}
+	return arkResp.Token, nil
+}
+
+// 注册后首次登录第十一步，提交信息到create_account接口
+func (userLogin *UserLogin) FirstLoginSubmitAccountInfo(email, accessToken, arkoseToken string) error {
+	// POST 到 https://api.openai.com/dashboard/onboarding/create_account
+	// 返回 200 表示成功
+
+	createAccountUrl := "https://api.openai.com/dashboard/onboarding/create_account"
+	username := getUsernameFromEmail(email)
+	usernamePref := "aa"
+	if len(username) > 2 {
+		usernamePref = username[:2]
+	}
+	birthDate := getValidRegBirthDate()
+	postData := map[string]string{
+		"app":       "chat",
+		"name":      username,
+		"picture":   fmt.Sprintf("https://s.gravatar.com/avatar/a382407675377f722d9097bed06eabe7?s=480&r=pg&d=https://cdn.auth0.com/avatars/%s.png", usernamePref),
+		"birthdate": birthDate,
+	}
+	bodyBytes, err := json.Marshal(postData)
+	if err != nil {
+		return err
+	}
+	bodyStr := string(bodyBytes)
+	req, err := http.NewRequest(http.MethodPost, createAccountUrl, strings.NewReader(bodyStr))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("OpenAI-Sentinel-Arkose-Token", arkoseToken)
+	req.Header.Set("User-Agent", userLogin.userAgent)
+
+	resp, err := userLogin.client.Do(req)
+	if err != nil {
+		return err
+	}
+
+	defer resp.Body.Close()
+	// 只有返回200才算成功
+	if resp.StatusCode != http.StatusOK {
+		respBytes, err := io.ReadAll(resp.Body)
+		if err == nil {
+			respStr := string(respBytes)
+			log.Printf("账号 %s 在调用 create_account 接口失败，状态码为 %d, 返回为为 %s", email, resp.StatusCode, respStr)
+		}
+		return fmt.Errorf("createAccountUrl 出错，返回的状态码不是200。 resp.StatusCode is %d", resp.StatusCode)
+	}
+
+	return nil
+}
+
 // 构造返回url的CloudFlare 403错误
 func NewCloudFlare403ErrorMessage(url string) string {
 
 	return fmt.Sprintf("url %s may have encountered Cloudflare's anti-bot protection, please send the request with cookies", url)
+}
+
+func generateCodeVerifier() (string, error) {
+	randomBytes := make([]byte, 32)
+	_, err := rand.Read(randomBytes)
+	if err != nil {
+		return "", err
+	}
+	verifier := base64.URLEncoding.WithPadding(base64.NoPadding).EncodeToString(randomBytes)
+	return verifier, nil
+}
+
+func generateCodeChallenge(codeVerifier string) (string, error) {
+	// 对codeVerifier进行SHA-256哈希
+	h := sha256.New()
+	_, err := h.Write([]byte(codeVerifier))
+	if err != nil {
+		return "", err
+	}
+	hashed := h.Sum(nil)
+
+	// 对哈希结果进行Base64 URL安全编码，并移除尾随的等号
+	codeChallenge := base64.URLEncoding.WithPadding(base64.NoPadding).EncodeToString(hashed)
+	return codeChallenge, nil
+}
+
+// 获取Email的@之前的部分
+func getUsernameFromEmail(email string) string {
+	if email == "" {
+		return "abcd"
+	}
+
+	emailArr := strings.Split(email, "@")
+
+	return emailArr[0]
+}
+
+func getValidRegBirthDate() string {
+	// 生成一个18-60岁的出生日期，形如 1999-01-01
+
+	now := time.Now()
+	// 生成一个介于18年前和60年前之间的随机数
+	rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
+	yearsAgo := rnd.Intn(43) + 18
+	date := now.AddDate(-yearsAgo, 0, 0)
+
+	// 将日期格式化成 "1999-01-01" 这样的形式
+	formattedDate := date.Format("2006-01-02")
+
+	return formattedDate
 }

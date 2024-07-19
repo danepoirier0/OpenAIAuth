@@ -16,16 +16,16 @@ func WithUserAgent(userAgent string) Option {
 	}
 }
 
-func WithChatOpenAiCookies(chatOpenAiCookies map[string]string) Option {
+func WithChatGPTCookies(chatGPTCookies map[string]string) Option {
 	return func(ul *UserLogin) {
 
 		cookiePairs := []string{}
-		for k, v := range chatOpenAiCookies {
+		for k, v := range chatGPTCookies {
 			cookiePairs = append(cookiePairs, k+"="+v)
 		}
 		cookieStr := strings.Join(cookiePairs, ";")
 
-		ul.chatOpenAiCookies = cookieStr
+		ul.chatGPTCookies = cookieStr
 	}
 }
 
