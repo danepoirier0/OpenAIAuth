@@ -154,8 +154,11 @@ func (userLogin *UserLogin) GetState(authorizedUrl string) (int, error) {
 	req, err := http.NewRequest(http.MethodGet, authorizedUrl, nil)
 
 	req.Header.Set("User-Agent", userLogin.userAgent)
-	// req.Header.Set("sec-ch-ua-arch", "x86")
-	// req.Header.Set("sec-ch-ua-bitness", "64")
+	req.Header.Set("sec-ch-ua-arch", "x86")
+	req.Header.Set("sec-ch-ua-bitness", "64")
+	if userLogin.authOpenAiCookies != "" {
+		req.Header.Set("Cookie", userLogin.authOpenAiCookies)
+	}
 
 	resp, err := userLogin.client.Do(req)
 	if err != nil {
@@ -186,7 +189,9 @@ func (userLogin *UserLogin) CheckUsername(authorizedUrl string, username string)
 	req.Header.Set("Referer", "https://auth.openai.com/")
 	req.Header.Set("sec-ch-ua-arch", "x86")
 	req.Header.Set("sec-ch-ua-bitness", "64")
-	req.Header.Set("Cookie", userLogin.auth0OpenAiCookies)
+	if userLogin.auth0OpenAiCookies != "" {
+		req.Header.Set("Cookie", userLogin.auth0OpenAiCookies)
+	}
 
 	userLogin.client.SetFollowRedirect(false)
 	resp, err := userLogin.client.Do(req)
@@ -257,7 +262,9 @@ func (userLogin *UserLogin) CheckPassword(state string, username string, passwor
 	req.Header.Set("User-Agent", userLogin.userAgent)
 	req.Header.Set("sec-ch-ua-arch", "x86")
 	req.Header.Set("sec-ch-ua-bitness", "64")
-	req.Header.Set("Cookie", userLogin.auth0OpenAiCookies)
+	if userLogin.auth0OpenAiCookies != "" {
+		req.Header.Set("Cookie", userLogin.auth0OpenAiCookies)
+	}
 
 	userLogin.client.SetFollowRedirect(false)
 	resp, err := userLogin.client.Do(req)
@@ -711,8 +718,9 @@ func (userLogin *UserLogin) GetFirstLoginCbCode(deviceId, state, codeChallenge s
 	req, err := http.NewRequest(http.MethodGet, parsedUrl.String(), nil)
 
 	req.Header.Set("User-Agent", userLogin.userAgent)
-	// req.Header.Set("sec-ch-ua-arch", "x86")
-	// req.Header.Set("sec-ch-ua-bitness", "64")
+	if userLogin.auth0OpenAiCookies != "" {
+		req.Header.Set("Cookie", userLogin.auth0OpenAiCookies)
+	}
 
 	resp, err := userLogin.client.Do(req)
 	if err != nil {
