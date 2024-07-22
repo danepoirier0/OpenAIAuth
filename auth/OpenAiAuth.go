@@ -249,6 +249,31 @@ func (userLogin *UserLogin) setArkose(dx string) (int, error) {
 	}
 }
 
+func (userLogin *UserLogin) setArkoseUseCapsolver(dx string) error {
+	capSolver := capsolver_go.CapSolver{ApiKey: userLogin.CapsolverApiKey}
+	resp, err := capSolver.Solve(map[string]any{
+		"type":             "FunCaptchaTaskProxyLess",
+		"websiteURL":       "https://tcr9i.openai.com",
+		"websitePublicKey": "0A1D34FC-659D-4E23-B17B-694DCFCF6A6C",
+		"userAgent":        userLogin.userAgent,
+		"data":             "{\"blob\": \"" + dx + "\"}",
+	})
+	if err != nil {
+		log.Println("setArkoseUseCapsolver Error " + err.Error())
+		return err
+	}
+
+	// return resp.Solution.Token, nil
+	u, _ := url.Parse("https://openai.com")
+	cookies := []*http.Cookie{}
+	userLogin.client.GetCookieJar().SetCookies(u, append(cookies, &http.Cookie{
+		Name:  "arkoseToken",
+		Value: resp.Solution.Token,
+	}))
+
+	return nil
+}
+
 //goland:noinspection GoUnhandledErrorResult,GoErrorStringFormat
 func (userLogin *UserLogin) CheckPassword(state string, username string, password string) (string, int, error) {
 	formParams := url.Values{
@@ -415,37 +440,37 @@ func (userLogin *UserLogin) FirstRegLogin(chatGPTAuthorizedPage, deviceId string
 			return fmt.Errorf("GetAuthorizedUrl response code is %d", resp.StatusCode)
 		}
 		chatGPTAuthorizedPage = authPage
-	} else {
-		log.Println("skip step 1 and step 2")
-	}
 
-	log.Println("step 3")
-	// 3. get state
-	statusCode, err := userLogin.GetState(chatGPTAuthorizedPage)
-	if err != nil {
-		return err
-	}
-	if statusCode != http.StatusOK {
-		return fmt.Errorf("get %s response code is %d", chatGPTAuthorizedPage, statusCode)
+		log.Println("step 3")
+		// 3. get state
+		statusCode, err = userLogin.GetState(chatGPTAuthorizedPage)
+		if err != nil {
+			return err
+		}
+		if statusCode != http.StatusOK {
+			return fmt.Errorf("get %s response code is %d", chatGPTAuthorizedPage, statusCode)
+		}
+	} else {
+		log.Println("skip step 1 2 3")
 	}
 
 	log.Println("step 4")
 	// 4. check username
-	state, dx, statusCode, err := userLogin.CheckUsername(chatGPTAuthorizedPage, userLogin.Username)
+	state, dx, _, err := userLogin.CheckUsername(chatGPTAuthorizedPage, userLogin.Username)
 	if err != nil {
 		return err
 	}
 
 	log.Println("step 5")
 	// 5. set arkose captcha
-	statusCode, err = userLogin.setArkose(dx)
+	err = userLogin.setArkoseUseCapsolver(dx)
 	if err != nil {
 		return err
 	}
 
 	log.Println("step 6")
 	// 6. check password
-	_, statusCode, err = userLogin.CheckPassword(state, userLogin.Username, userLogin.Password)
+	_, _, err = userLogin.CheckPassword(state, userLogin.Username, userLogin.Password)
 	if err != nil {
 		return err
 	}
