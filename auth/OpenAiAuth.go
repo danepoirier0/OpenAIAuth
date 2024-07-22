@@ -384,39 +384,44 @@ func (userLogin *UserLogin) Begin() *Error {
 
 // 注册并 Verfiy Email之后, 首次登录调用这个方法
 //
-// chatGPTAuthLoginPage 为点击 Login 之后的 形如 auth.openai.com/authorize?client_id=xxx 的页面
-func (userLogin *UserLogin) FirstRegLogin(deviceId string) error {
+// chatGPTAuthorizedPage 为点击 Login 之后的 形如 auth.openai.com/authorize?client_id=xxx 的页面，可以为空
+func (userLogin *UserLogin) FirstRegLogin(chatGPTAuthorizedPage, deviceId string) error {
 	// 前1-5步跟普通登录一样，第6步接口一样但是302跳转之后就开始不一样
 	// 之后再调用其它的完成注册使用的方法
 
-	log.Println("step 1")
-	// 1. get csrf token
-	req, _ := http.NewRequest(http.MethodGet, csrfUrl, nil)
-	req.Header.Set("User-Agent", userLogin.userAgent)
-	resp, err := userLogin.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("get %s response code is %d", csrfUrl, resp.StatusCode)
-	}
+	if chatGPTAuthorizedPage == "" {
+		log.Println("step 1")
+		// 1. get csrf token
+		req, _ := http.NewRequest(http.MethodGet, csrfUrl, nil)
+		req.Header.Set("User-Agent", userLogin.userAgent)
+		resp, err := userLogin.client.Do(req)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("get %s response code is %d", csrfUrl, resp.StatusCode)
+		}
 
-	log.Println("step 2")
-	// 2. get authorized url
-	responseMap := make(map[string]string)
-	json.NewDecoder(resp.Body).Decode(&responseMap)
-	chatGPTAuthorizedPage, statusCode, err := userLogin.GetAuthorizedUrl(responseMap["csrfToken"])
-	if err != nil {
-		return err
-	}
-	if statusCode != http.StatusOK {
-		return fmt.Errorf("GetAuthorizedUrl response code is %d", resp.StatusCode)
+		log.Println("step 2")
+		// 2. get authorized url
+		responseMap := make(map[string]string)
+		json.NewDecoder(resp.Body).Decode(&responseMap)
+		authPage, statusCode, err := userLogin.GetAuthorizedUrl(responseMap["csrfToken"])
+		if err != nil {
+			return err
+		}
+		if statusCode != http.StatusOK {
+			return fmt.Errorf("GetAuthorizedUrl response code is %d", resp.StatusCode)
+		}
+		chatGPTAuthorizedPage = authPage
+	} else {
+		log.Println("skip step 1 and step 2")
 	}
 
 	log.Println("step 3")
 	// 3. get state
-	statusCode, err = userLogin.GetState(chatGPTAuthorizedPage)
+	statusCode, err := userLogin.GetState(chatGPTAuthorizedPage)
 	if err != nil {
 		return err
 	}

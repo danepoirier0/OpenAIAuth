@@ -25,7 +25,7 @@ func main() {
 
 	deviceId := uuid.NewString()
 
-	err := auth.FirstRegLogin(deviceId)
+	err := auth.FirstRegLogin("", deviceId)
 	if err != nil {
 		panic(err)
 	}
