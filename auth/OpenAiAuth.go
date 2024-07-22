@@ -182,14 +182,21 @@ func (userLogin *UserLogin) CheckUsername(authorizedUrl string, username string)
 	u, _ := url.Parse(authorizedUrl)
 	query := u.Query()
 	query.Del("prompt")
+	query.Add("max_age", "0")
 	query.Set("login_hint", username)
 	req, _ := http.NewRequest(http.MethodGet, Auth0Url+"/authorize?"+query.Encode(), nil)
 
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/png,image/svg+xml,*/*;q=0.8")
+	req.Header.Set("Accept-Encoding", "gzip, deflate, br, zstd")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.5")
+	req.Header.Set("Host", "auth0.openai.com")
+
 	req.Header.Set("User-Agent", userLogin.userAgent)
 	req.Header.Set("Referer", "https://auth.openai.com/")
-	req.Header.Set("sec-ch-ua-arch", "x86")
-	req.Header.Set("sec-ch-ua-bitness", "64")
+	// req.Header.Set("sec-ch-ua-arch", "x86")
+	// req.Header.Set("sec-ch-ua-bitness", "64")
 	if userLogin.auth0OpenAiCookies != "" {
+		log.Println("userLogin.auth0OpenAiCookies ", userLogin.auth0OpenAiCookies)
 		req.Header.Set("Cookie", userLogin.auth0OpenAiCookies)
 	}
 
@@ -249,30 +256,30 @@ func (userLogin *UserLogin) setArkose(dx string) (int, error) {
 	}
 }
 
-func (userLogin *UserLogin) setArkoseUseCapsolver(dx string) error {
-	capSolver := capsolver_go.CapSolver{ApiKey: userLogin.CapsolverApiKey}
-	resp, err := capSolver.Solve(map[string]any{
-		"type":             "FunCaptchaTaskProxyLess",
-		"websiteURL":       "https://tcr9i.openai.com",
-		"websitePublicKey": "0A1D34FC-659D-4E23-B17B-694DCFCF6A6C",
-		"userAgent":        userLogin.userAgent,
-		"data":             "{\"blob\": \"" + dx + "\"}",
-	})
-	if err != nil {
-		log.Println("setArkoseUseCapsolver Error " + err.Error())
-		return err
-	}
+// func (userLogin *UserLogin) setArkoseUseCapsolver(dx string) error {
+// 	capSolver := capsolver_go.CapSolver{ApiKey: userLogin.CapsolverApiKey}
+// 	resp, err := capSolver.Solve(map[string]any{
+// 		"type":             "FunCaptchaTaskProxyLess",
+// 		"websiteURL":       "https://tcr9i.openai.com",
+// 		"websitePublicKey": "0A1D34FC-659D-4E23-B17B-694DCFCF6A6C",
+// 		"userAgent":        userLogin.userAgent,
+// 		"data":             "{\"blob\": \"" + dx + "\"}",
+// 	})
+// 	if err != nil {
+// 		log.Println("setArkoseUseCapsolver Error " + err.Error())
+// 		return err
+// 	}
 
-	// return resp.Solution.Token, nil
-	u, _ := url.Parse("https://openai.com")
-	cookies := []*http.Cookie{}
-	userLogin.client.GetCookieJar().SetCookies(u, append(cookies, &http.Cookie{
-		Name:  "arkoseToken",
-		Value: resp.Solution.Token,
-	}))
+// 	// return resp.Solution.Token, nil
+// 	u, _ := url.Parse("https://openai.com")
+// 	cookies := []*http.Cookie{}
+// 	userLogin.client.GetCookieJar().SetCookies(u, append(cookies, &http.Cookie{
+// 		Name:  "arkoseToken",
+// 		Value: resp.Solution.Token,
+// 	}))
 
-	return nil
-}
+// 	return nil
+// }
 
 //goland:noinspection GoUnhandledErrorResult,GoErrorStringFormat
 func (userLogin *UserLogin) CheckPassword(state string, username string, password string) (string, int, error) {
@@ -463,7 +470,7 @@ func (userLogin *UserLogin) FirstRegLogin(chatGPTAuthorizedPage, deviceId string
 
 	log.Println("step 5")
 	// 5. set arkose captcha
-	err = userLogin.setArkoseUseCapsolver(dx)
+	statusCode, err = userLogin.setArkose(dx)
 	if err != nil {
 		return err
 	}
