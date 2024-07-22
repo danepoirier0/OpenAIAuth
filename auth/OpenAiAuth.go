@@ -980,7 +980,11 @@ func getUsernameFromEmail(email string) string {
 
 	emailArr := strings.Split(email, "@")
 
-	return emailArr[0]
+	// 定义正则表达式，匹配所有数字，使用正则表达式替换掉所有数字
+	re := regexp.MustCompile("[0-9]+")
+	result := re.ReplaceAllString(emailArr[0], "")
+
+	return result
 }
 
 func getValidRegBirthDate() string {
