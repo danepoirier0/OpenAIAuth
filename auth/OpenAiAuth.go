@@ -470,7 +470,7 @@ func (userLogin *UserLogin) FirstRegLogin(chatGPTAuthorizedPage, deviceId string
 
 	log.Println("step 5")
 	// 5. set arkose captcha
-	statusCode, err = userLogin.setArkose(dx)
+	_, err = userLogin.setArkose(dx)
 	if err != nil {
 		return err
 	}
